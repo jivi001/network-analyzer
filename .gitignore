@@ -1,0 +1,14 @@
+# my-sentinel - Network Traffic Analyzer & Scanner
+sentinel_data.db
+sentinel_data.db-shm
+sentinel_data.db-wal
+exports/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+*.pcap
+*.pcapng
+logs/

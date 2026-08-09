@@ -1,0 +1,11 @@
+name: "Unencrypted Protocol"
+description: "Flags traffic on cleartext protocols (HTTP, FTP, Telnet)"
+severity: HIGH
+match:
+  protocol: TCP
+  dst_port: [80, 21, 23]
+  condition: cleartext
+action:
+  alert: true
+  log: true
+  message: "Cleartext {service} traffic: {src_ip} → {dst_ip}:{dst_port}"

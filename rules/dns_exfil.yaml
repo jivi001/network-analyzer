@@ -1,0 +1,12 @@
+name: "DNS Exfiltration Tunnel"
+description: "Detects high-entropy DNS subdomain queries"
+severity: CRITICAL
+match:
+  protocol: DNS
+  condition: high_entropy_subdomain
+  entropy_threshold: 3.5
+  min_subdomain_length: 20
+action:
+  alert: true
+  log: true
+  message: "DNS Exfiltration: {dns_query} (entropy={entropy:.2f})"

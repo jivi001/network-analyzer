@@ -1,0 +1,65 @@
+# my-sentinel configuration
+# Copy this to config.yaml and customize
+
+general:
+  app_name: "my-sentinel"
+  version: "1.0.0"
+  # Database file location (relative to project root)
+  database_path: "sentinel_data.db"
+
+capture:
+  # Default network interface (leave blank for auto-detect)
+  interface: ""
+  # Maximum packets to buffer in memory for TUI display
+  packet_buffer_size: 500
+  # Dashboard refresh rate in frames per second
+  refresh_fps: 4
+  # Default BPF filter (blank = capture all)
+  default_filter: ""
+  # Enable privacy masking by default
+  privacy_mask: false
+
+scanner:
+  # Default Nmap arguments for each scan type
+  quick_scan: "-sn"
+  port_scan: "-sS --top-ports 1000"
+  full_scan: "-sV -O --top-ports 1000"
+  stealth_scan: "-sS -T2 --top-ports 100"
+  # Scan timeout in seconds
+  timeout: 300
+
+detection:
+  # Path to YAML rule files directory
+  rules_directory: "rules"
+  # Alert deduplication window in seconds
+  dedup_window: 60
+  # Maximum alerts to keep in memory
+  max_alerts: 100
+  # DNS exfiltration entropy threshold
+  dns_entropy_threshold: 3.5
+  # Minimum subdomain length to check for exfiltration
+  dns_min_subdomain_length: 20
+  # Beaconing detection interval tolerance (seconds)
+  beacon_interval_tolerance: 5.0
+
+network:
+  # Enable Whois lookups (can be slow)
+  enable_whois: true
+  # Whois cache TTL in seconds
+  whois_cache_ttl: 3600
+  # Enable reverse DNS
+  enable_rdns: true
+  # Enable traceroute
+  enable_traceroute: false
+
+export:
+  # Default export directory
+  export_directory: "exports"
+  # Include raw packet data in JSON exports
+  json_include_payload: false
+
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+  # Log file path (blank = no file logging)
+  log_file: ""

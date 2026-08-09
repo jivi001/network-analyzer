@@ -1,0 +1,12 @@
+name: "TCP SYN Probe"
+description: "Flags individual TCP SYN packets (potential reconnaissance)"
+severity: WARNING
+match:
+  protocol: TCP
+  flags:
+    - SYN
+  condition: port_match
+action:
+  alert: true
+  log: true
+  message: "SYN Probe: {src_ip} → {dst_ip}:{dst_port}"

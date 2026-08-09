@@ -1,0 +1,11 @@
+name: "High Port Connection"
+description: "Flags connections to non-standard high ports"
+severity: INFO
+match:
+  protocol: TCP
+  condition: high_port
+  threshold: 1024
+action:
+  alert: true
+  log: true
+  message: "High Port: {src_ip} → {dst_ip}:{dst_port}"

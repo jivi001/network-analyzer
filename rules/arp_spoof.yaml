@@ -1,0 +1,10 @@
+name: "ARP Spoofing"
+description: "Detects ARP cache poisoning attempts"
+severity: CRITICAL
+match:
+  protocol: ARP
+  condition: mac_change
+action:
+  alert: true
+  log: true
+  message: "ARP Spoof: {src_ip} changed MAC from {old_mac} to {new_mac}"

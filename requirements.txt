@@ -1,0 +1,5 @@
+scapy>=2.5.0
+rich>=13.0
+python-nmap>=0.7.1
+ipwhois>=1.2.0
+pyyaml>=6.0
