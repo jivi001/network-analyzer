@@ -1,6 +1,7 @@
 import time
 from typing import List
 
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -38,12 +39,13 @@ def display_pcap_analysis(
             Text.from_markup(summary_text),
             title="PCAP Forensic Summary",
             border_style="blue",
+            box=box.ASCII,
         )
     )
     console.print()
 
     # Protocol distribution table
-    proto_table = Table(show_header=True, header_style="bold magenta", expand=True)
+    proto_table = Table(show_header=True, header_style="bold magenta", expand=True, box=box.ASCII)
     proto_table.add_column("Protocol")
     proto_table.add_column("Count", justify="right")
     proto_table.add_column("Percentage", justify="right")
@@ -60,11 +62,11 @@ def display_pcap_analysis(
                 f"{pct:.1f}%",
                 build_bar(count, stats.total_packets, 25),
             )
-    console.print(Panel(proto_table, title="Protocol Breakdown"))
+    console.print(Panel(proto_table, title="Protocol Breakdown", box=box.ASCII))
 
     # Top Talkers table
     if stats.top_talkers:
-        talkers_table = Table(show_header=True, header_style="bold green", expand=True)
+        talkers_table = Table(show_header=True, header_style="bold green", expand=True, box=box.ASCII)
         talkers_table.add_column("IP Address")
         talkers_table.add_column("Bytes Volume", justify="right")
         talkers_table.add_column("Packet Count", justify="right")
@@ -75,11 +77,11 @@ def display_pcap_analysis(
                 format_bytes(item["bytes"]),
                 f"{item['packets']:,}",
             )
-        console.print(Panel(talkers_table, title="Top Data Sources"))
+        console.print(Panel(talkers_table, title="Top Data Sources", box=box.ASCII))
 
     # Alerts Found table
     if alerts:
-        alerts_table = Table(show_header=True, header_style="bold red", expand=True)
+        alerts_table = Table(show_header=True, header_style="bold red", expand=True, box=box.ASCII)
         alerts_table.add_column("Time", width=12)
         alerts_table.add_column("Severity", width=12)
         alerts_table.add_column("Rule Name")
@@ -92,4 +94,4 @@ def display_pcap_analysis(
                 alert.rule_name,
                 alert.message,
             )
-        console.print(Panel(alerts_table, title=f"Flagged Threats ({len(alerts)})", border_style="red"))
+        console.print(Panel(alerts_table, title=f"Flagged Threats ({len(alerts)})", border_style="red", box=box.ASCII))

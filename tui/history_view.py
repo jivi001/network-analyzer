@@ -1,43 +1,62 @@
 from typing import List
 
+from rich import box
+from rich.align import Align
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from rich.prompt import Prompt
+from rich.table import Table
+from rich.text import Text
 
-from storage.models import SessionInfo, AlertInfo, HostInfo
-from utils.constants import format_bytes
+from storage.models import AlertInfo, HostInfo, SessionInfo
 from tui.helpers import format_alert_row, format_host_row
+from utils.constants import format_bytes
+from tui.menu import clear_screen
 
 console = Console()
 
 
 def display_history_menu() -> str:
     """Sub-menu for history mode."""
-    console.clear()
-    console.print("\n[bold cyan]📊 History & Intelligence Browser[/bold cyan]\n")
-    console.print("   [1] 🕒 Recent Sessions")
-    console.print("   [2] 🚨 All Alerts History")
-    console.print("   [3] 🖥️ Discovered Hosts")
-    console.print("   [4] 🔍 Search Database")
-    console.print("   [5] 📥 Import JSON Data")
-    console.print("   [6] ↩️  Back to Main Menu")
+    clear_screen()
+
+    menu_text = Text()
+    menu_text.append("\n")
+    menu_text.append("   [1]  Recent Sessions\n", style="bold white")
+    menu_text.append("   [2]  All Alerts History\n", style="bold white")
+    menu_text.append("   [3]  Discovered Hosts\n", style="bold white")
+    menu_text.append("   [4]  Search Database\n", style="bold white")
+    menu_text.append("   [5]  Import JSON Data\n", style="bold white")
+    menu_text.append("   [6]  Back to Main Menu\n", style="bold white")
+
+    panel = Panel(
+        Align.center(menu_text),
+        title="History & Intelligence Browser",
+        subtitle="my-sentinel",
+        width=54,
+        box=box.ASCII,
+        border_style="blue",
+        padding=(1, 2),
+    )
+
+    console.print(Align.center(panel))
     console.print()
 
-    while True:
-        choice = Prompt.ask("Select an option", choices=["1", "2", "3", "4", "5", "6"], default="1")
-        if choice in ["1", "2", "3", "4", "5", "6"]:
-            return choice
+    return Prompt.ask(
+        "Select an option",
+        choices=["1", "2", "3", "4", "5", "6"],
+        default="1",
+    )
 
 
 def display_sessions(sessions: List[SessionInfo]):
     """Rich table of sessions."""
-    console.clear()
+    clear_screen()
     if not sessions:
-        console.print("[yellow]No sessions recorded yet.[/yellow]")
+        console.print(Panel("[yellow]No sessions recorded yet.[/yellow]", title="Recent Sessions", box=box.ASCII))
         return
 
-    table = Table(title="Recent Sessions History", show_header=True, header_style="bold magenta", expand=True)
+    table = Table(title="Recent Sessions History", show_header=True, header_style="bold magenta", expand=True, box=box.ASCII)
     table.add_column("ID", width=6, justify="right")
     table.add_column("Type", width=14)
     table.add_column("Start Time", width=20)
@@ -63,13 +82,13 @@ def display_sessions(sessions: List[SessionInfo]):
 
 
 def display_alerts_history(alerts: List[AlertInfo]):
-    """Paginated alert table."""
-    console.clear()
+    """Display alert table."""
+    clear_screen()
     if not alerts:
-        console.print("[yellow]No alerts recorded in database.[/yellow]")
+        console.print(Panel("[yellow]No alerts recorded in database.[/yellow]", title="Security Alerts", box=box.ASCII))
         return
 
-    table = Table(title=f"Security Alerts ({len(alerts)})", show_header=True, header_style="bold red", expand=True)
+    table = Table(title=f"Security Alerts ({len(alerts)})", show_header=True, header_style="bold red", expand=True, box=box.ASCII)
     table.add_column("Time", width=20)
     table.add_column("Severity", width=12)
     table.add_column("Rule Name")
@@ -85,12 +104,12 @@ def display_alerts_history(alerts: List[AlertInfo]):
 
 def display_hosts_table(hosts: List[HostInfo]):
     """Discovered hosts table."""
-    console.clear()
+    clear_screen()
     if not hosts:
-        console.print("[yellow]No discovered hosts recorded yet.[/yellow]")
+        console.print(Panel("[yellow]No discovered hosts recorded yet.[/yellow]", title="Discovered Hosts", box=box.ASCII))
         return
 
-    table = Table(title=f"Discovered Hosts ({len(hosts)})", show_header=True, header_style="bold green", expand=True)
+    table = Table(title=f"Discovered Hosts ({len(hosts)})", show_header=True, header_style="bold green", expand=True, box=box.ASCII)
     table.add_column("IP Address")
     table.add_column("MAC Address")
     table.add_column("Hostname")
@@ -108,9 +127,8 @@ def display_hosts_table(hosts: List[HostInfo]):
 
 def display_session_detail(session: SessionInfo, alerts: List[AlertInfo]):
     """Drill into a session."""
-    console.clear()
+    clear_screen()
 
-    # Summary panel
     summary = (
         f"Session ID: [bold]{session.id}[/bold]\n"
         f"Type: [cyan]{session.session_type}[/cyan]\n"
@@ -120,8 +138,17 @@ def display_session_detail(session: SessionInfo, alerts: List[AlertInfo]):
         f"Total Volume: [bold]{format_bytes(session.total_bytes)}[/bold]\n"
         f"Alerts Flagged: [bold red]{session.alert_count}[/bold red]"
     )
-    console.print(Panel(summary, title=f"Session #{session.id} Overview", border_style="blue"))
+    console.print(Panel(summary, title=f"Session #{session.id} Overview", border_style="blue", box=box.ASCII))
     console.print()
 
     if alerts:
-        display_alerts_history(alerts)
+        table = Table(title=f"Security Alerts ({len(alerts)})", show_header=True, header_style="bold red", expand=True, box=box.ASCII)
+        table.add_column("Time", width=20)
+        table.add_column("Severity", width=12)
+        table.add_column("Rule Name")
+        table.add_column("Source IP")
+        table.add_column("Dest IP")
+        table.add_column("Message")
+        for alert in alerts:
+            table.add_row(*format_alert_row(alert))
+        console.print(table)

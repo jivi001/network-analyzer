@@ -21,6 +21,7 @@ import time
 import threading
 from collections import deque
 from datetime import datetime
+from queue import Empty, Full, Queue
 
 if sys.platform == 'win32':
     try:
@@ -141,8 +142,10 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     dashboard = LiveDashboard(stats, alert_manager, privacy)
 
     packet_buffer = deque(maxlen=config.get("packet_buffer_size", 500))
+    packet_queue = Queue(maxsize=config.get("packet_queue_size", 5000))
     raw_packets = []
     packet_counter = [0]  # Mutable counter for closure
+    dropped_packets = [0]
     lock = threading.Lock()
 
     # Create session record
@@ -156,24 +159,40 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     session_id = db.create_session(session)
 
     def on_packet(raw_pkt):
-        """Callback for each captured packet."""
-        with lock:
-            packet_counter[0] += 1
-            pkt_info = process_packet(raw_pkt, packet_counter[0])
+        """Capture callback: keep sniffer thread non-blocking."""
+        try:
+            packet_queue.put_nowait(raw_pkt)
+        except Full:
+            dropped_packets[0] += 1
 
-            if pkt_info:
-                # Update stats
-                stats.update(pkt_info)
+    def process_pending_packets(max_packets: int = 250):
+        """Drain queued capture packets into stats, detection, and display buffers."""
+        processed = 0
+        while processed < max_packets:
+            try:
+                raw_pkt = packet_queue.get_nowait()
+            except Empty:
+                break
 
-                # Run detection
-                for alert in detection_pipeline.evaluate(pkt_info):
-                    alert.session_id = session_id
-                    if alert_manager.add(alert):
-                        db.save_alert(alert)
+            with lock:
+                packet_counter[0] += 1
+                pkt_info = process_packet(raw_pkt, packet_counter[0])
 
-                # Buffer for display
-                packet_buffer.append(pkt_info)
-                raw_packets.append(raw_pkt)
+                if pkt_info:
+                    stats.update(pkt_info)
+
+                    for alert in detection_pipeline.evaluate(pkt_info):
+                        alert.session_id = session_id
+                        if alert_manager.add(alert):
+                            db.save_alert(alert)
+
+                    packet_buffer.append(pkt_info)
+                    raw_packets.append(raw_pkt)
+
+            packet_queue.task_done()
+            processed += 1
+
+        return processed
 
     # Start capture
     console.print()
@@ -203,6 +222,7 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
             while sniffer.is_running():
                 try:
                     if not paused:
+                        process_pending_packets()
                         dashboard.update(list(packet_buffer))
                         live.update(dashboard.get_renderable())
                     
@@ -250,6 +270,7 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     except Exception as e:
         console.print(f"[bold red]Error during capture:[/bold red] {e}")
     finally:
+        process_pending_packets(max_packets=packet_queue.qsize())
         sniffer.stop()
         stats.stop_rate_calculator()
 
@@ -266,6 +287,8 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     console.print()
     console.print(f"[bold green]Capture stopped.[/bold green]")
     console.print(f"  Packets: {snapshot.total_packets:,} | Bytes: {snapshot.total_bytes:,} | Alerts: {alert_manager.get_count()}")
+    if dropped_packets[0]:
+        console.print(f"  Dropped by application queue: {dropped_packets[0]:,}")
     console.print()
 
     # Offer export
@@ -453,6 +476,9 @@ def run_history_viewer(db: Database):
                     if session:
                         alerts = db.get_alerts(session_id=int(session_id))
                         display_session_detail(session, alerts)
+                Prompt.ask("Press Enter to continue", default="")
+            else:
+                Prompt.ask("Press Enter to continue", default="")
 
         elif choice == "2":
             # All alerts
@@ -465,17 +491,20 @@ def run_history_viewer(db: Database):
             else:
                 alerts = db.get_alerts(severity=severity.upper())
             display_alerts_history(alerts)
+            Prompt.ask("Press Enter to continue", default="")
 
         elif choice == "3":
             # Discovered hosts
             hosts = db.get_hosts()
             display_hosts_table(hosts)
+            Prompt.ask("Press Enter to continue", default="")
 
         elif choice == "4":
             # Search
             query = Prompt.ask("Search (IP address, date, or keyword)")
             sessions = db.search_sessions(query)
             display_sessions(sessions)
+            Prompt.ask("Press Enter to continue", default="")
 
         elif choice == "5":
             # Import JSON Data
@@ -484,7 +513,7 @@ def run_history_viewer(db: Database):
                 from storage.importer import Importer
                 importer = Importer(db)
                 if importer.import_json(filepath):
-                    console.print(f"\n[bold green]✓ Successfully imported records from {filepath}[/bold green]")
+                    console.print(f"\n[bold green]Successfully imported records from {filepath}[/bold green]")
                 else:
                     console.print("\n[bold red]Failed to import records.[/bold red]")
             else:
