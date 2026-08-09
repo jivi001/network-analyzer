@@ -9,6 +9,16 @@ from typing import Optional
 from storage.models import PacketInfo, AlertInfo
 
 
+def shannon_entropy(value: str) -> float:
+    """Calculate Shannon entropy in bits per character."""
+    if not value:
+        return 0.0
+
+    counts = {char: value.count(char) for char in set(value)}
+    length = len(value)
+    return -sum((count / length) * math.log(count / length, 2) for count in counts.values())
+
+
 class AnomalyDetector:
     """Detects network anomalies like port scans and DNS exfiltration."""
 
@@ -42,12 +52,7 @@ class AnomalyDetector:
         if len(subdomain) <= 20:
             return None
 
-        # Calculate Shannon entropy
-        prob = [
-            float(subdomain.count(c)) / len(subdomain)
-            for c in dict.fromkeys(list(subdomain))
-        ]
-        entropy = -sum(p * math.log(p, 2) for p in prob)
+        entropy = shannon_entropy(subdomain)
 
         if entropy > 3.5:
             return AlertInfo(

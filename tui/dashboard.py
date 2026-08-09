@@ -65,7 +65,7 @@ class LiveDashboard:
             ("my-sentinel v", "bold cyan"),
             (APP_VERSION, "bold cyan"),
             " | ",
-            ("Keybindings: [P]ause UI, [Q]uit (or Ctrl+C)", "white"),
+            ("Keybindings: [P]ause [F]ilter [E]xport [Q]uit", "white"),
             " | Elapsed: ",
             (elapsed, "bold green"),
         )

@@ -51,6 +51,7 @@ from detection.rule_engine import RuleEngine
 from detection.anomaly import AnomalyDetector
 from detection.arp_monitor import ArpMonitor
 from detection.alerts import AlertManager
+from detection.pipeline import PacketDetectionPipeline
 
 from tui.menu import (
     show_main_menu,
@@ -135,6 +136,7 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     rule_engine = RuleEngine(rules_dir=config.get("rules_directory", "rules"))
     anomaly_detector = AnomalyDetector()
     arp_monitor = ArpMonitor()
+    detection_pipeline = PacketDetectionPipeline(rule_engine, anomaly_detector, arp_monitor)
     sniffer = PacketSniffer()
     dashboard = LiveDashboard(stats, alert_manager, privacy)
 
@@ -164,33 +166,10 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
                 stats.update(pkt_info)
 
                 # Run detection
-                # 1. Rule-based detection
-                rule_alerts = rule_engine.evaluate(pkt_info)
-                for alert in rule_alerts:
+                for alert in detection_pipeline.evaluate(pkt_info):
                     alert.session_id = session_id
                     if alert_manager.add(alert):
                         db.save_alert(alert)
-
-                # 2. Anomaly detection
-                dns_alert = anomaly_detector.check_dns_exfiltration(pkt_info)
-                if dns_alert:
-                    dns_alert.session_id = session_id
-                    if alert_manager.add(dns_alert):
-                        db.save_alert(dns_alert)
-
-                scan_alert = anomaly_detector.check_port_scan(pkt_info)
-                if scan_alert:
-                    scan_alert.session_id = session_id
-                    if alert_manager.add(scan_alert):
-                        db.save_alert(scan_alert)
-
-                # 3. ARP monitoring
-                if pkt_info.protocol == "ARP":
-                    arp_alert = arp_monitor.check(pkt_info)
-                    if arp_alert:
-                        arp_alert.session_id = session_id
-                        if alert_manager.add(arp_alert):
-                            db.save_alert(arp_alert)
 
                 # Buffer for display
                 packet_buffer.append(pkt_info)
@@ -236,6 +215,31 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
                                 sniffer.stop()
                             elif key == 'p':
                                 paused = not paused
+                            elif key == 'f':
+                                live.stop()
+                                try:
+                                    new_filter = Prompt.ask("BPF Filter (blank to clear)", default="")
+                                    bpf_filter = new_filter
+                                    sniffer.restart_with_filter(bpf_filter if bpf_filter else None)
+                                    dashboard.update(list(packet_buffer))
+                                except Exception as e:
+                                    console.print(f"[bold red]Filter change failed:[/bold red] {e}")
+                                finally:
+                                    live.start(refresh=True)
+                            elif key == 'e':
+                                exporter = Exporter()
+                                export_dir = config.get("export_directory", "exports")
+                                filename = exporter.generate_filename("capture", "json")
+                                filepath = os.path.join(export_dir, filename)
+                                try:
+                                    exporter.export_json(
+                                        filepath,
+                                        alert_manager.get_all(),
+                                        stats.get_snapshot(),
+                                    )
+                                    console.print(f"[green]Exported to:[/green] {filepath}")
+                                except Exception as e:
+                                    console.print(f"[bold red]Export failed:[/bold red] {e}")
 
                     time.sleep(refresh_interval)
                 except KeyboardInterrupt:
@@ -271,21 +275,28 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
             exporter = Exporter()
             exporter.ensure_export_dir(config.get("export_directory", "exports"))
 
-            fmt = export_settings.get("format", "csv")
+            fmt = export_settings.get("format", "csv").lower()
             filename = export_settings.get(
                 "filename",
                 exporter.generate_filename("capture", fmt),
-            )
+            ) or exporter.generate_filename("capture", fmt)
             filepath = os.path.join(config.get("export_directory", "exports"), filename)
 
-            if fmt == "csv":
-                exporter.export_csv(filepath, list(packet_buffer), snapshot)
-            elif fmt == "pcap":
-                exporter.export_pcap(filepath, raw_packets)
-            elif fmt == "json":
-                exporter.export_json(filepath, alert_manager.get_all(), snapshot)
+            try:
+                if fmt == "csv":
+                    exporter.export_csv(filepath, list(packet_buffer), snapshot)
+                elif fmt == "pcap":
+                    exporter.export_pcap(filepath, raw_packets)
+                elif fmt == "json":
+                    exporter.export_json(filepath, alert_manager.get_all(), snapshot)
+                else:
+                    raise ValueError(f"Unsupported export format: {fmt}")
+            except Exception as e:
+                filepath = ""
+                console.print(f"[bold red]Export failed:[/bold red] {e}")
 
-            console.print(f"[green]✓ Exported to:[/green] {filepath}")
+            if filepath:
+                console.print(f"[green]Exported to:[/green] {filepath}")
 
 
 def run_network_scan(config: dict, db: Database):
@@ -368,7 +379,7 @@ def run_pcap_analysis(config: dict, db: Database, privacy: PrivacyFilter):
     """
     Mode 3: PCAP Analysis — Load and analyze .pcap capture files.
     """
-    filepath = prompt_pcap_path()
+    filepath = config.get("_pcap_path") or prompt_pcap_path()
     if not filepath:
         return
 
@@ -388,11 +399,13 @@ def run_pcap_analysis(config: dict, db: Database, privacy: PrivacyFilter):
 
     # Run detection retroactively
     rule_engine = RuleEngine(rules_dir=config.get("rules_directory", "rules"))
+    anomaly_detector = AnomalyDetector()
+    arp_monitor = ArpMonitor()
+    detection_pipeline = PacketDetectionPipeline(rule_engine, anomaly_detector, arp_monitor)
     alert_manager = AlertManager(max_alerts=config.get("max_alerts", 100))
 
     for pkt in packets:
-        alerts = rule_engine.evaluate(pkt)
-        for alert in alerts:
+        for alert in detection_pipeline.evaluate(pkt):
             alert_manager.add(alert)
 
     # Create session record

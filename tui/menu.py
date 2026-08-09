@@ -65,7 +65,7 @@ def prompt_scan_settings() -> Dict[str, str]:
         
     scan_type = Prompt.ask(
         "Scan Type", 
-        choices=["quick", "full", "stealth", "vuln"],
+        choices=["quick", "port", "full", "stealth"],
         default="quick"
     )
     
@@ -87,9 +87,9 @@ def prompt_export_settings() -> Dict[str, str]:
     """Ask for format and filename."""
     console.print("\n[bold cyan]Export Settings[/bold cyan]")
     fmt = Prompt.ask("Export Format", choices=["CSV", "PCAP", "JSON"], default="CSV")
-    filename = Prompt.ask("Output Filename")
+    filename = Prompt.ask("Output Filename", default="")
     
     return {
-        "format": fmt,
+        "format": fmt.lower(),
         "filename": filename
     }

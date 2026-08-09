@@ -19,6 +19,7 @@ class PacketSniffer:
         self.thread: Optional[threading.Thread] = None
         self.lock = threading.Lock()
         self.raw_packets: List = []
+        self.interface: Optional[str] = None
 
     def start(
         self,
@@ -45,6 +46,7 @@ class PacketSniffer:
 
             if not interface:
                 interface = scapy.conf.iface
+            self.interface = interface
 
             self.thread = threading.Thread(
                 target=self._sniff_loop, args=(interface,), daemon=True
@@ -65,6 +67,8 @@ class PacketSniffer:
             from rich.console import Console
 
             Console().print(f"[bold red][!] Sniffer error:[/bold red] {e}")
+            self.running.clear()
+        finally:
             self.running.clear()
 
     def _process_packet(self, packet):
@@ -88,6 +92,13 @@ class PacketSniffer:
         """Sets a new BPF filter."""
         with self.lock:
             self.bpf_filter = bpf_filter
+
+    def restart_with_filter(self, bpf_filter: str):
+        """Restart capture using a new BPF filter."""
+        interface = self.interface
+        callback = self.callback
+        self.stop()
+        self.start(interface=interface, bpf_filter=bpf_filter, callback=callback)
 
     def is_running(self) -> bool:
         """Returns True if the sniffer is running."""

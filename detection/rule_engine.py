@@ -4,6 +4,7 @@ Rule Engine for my-sentinel.
 import os
 import yaml
 from typing import List
+from detection.anomaly import shannon_entropy
 from storage.models import PacketInfo, AlertInfo, DetectionRule
 
 
@@ -35,10 +36,12 @@ class RuleEngine:
                                 name=data.get("name", "Unknown"),
                                 description=data.get("description", ""),
                                 severity=data.get("severity", "INFO"),
+                                enabled=data.get("enabled", True),
                                 match=data.get("match", {}),
                                 action=data.get("action", {}),
                             )
-                            self.rules.append(rule)
+                            if self._is_valid_rule(rule):
+                                self.rules.append(rule)
                     except Exception:
                         pass  # Handle invalid YAML gracefully
         return self.rules
@@ -47,6 +50,8 @@ class RuleEngine:
         """Check a packet against all loaded rules."""
         alerts = []
         for rule in self.rules:
+            if not rule.enabled:
+                continue
             if self._match_rule(packet, rule):
                 action = rule.action
                 if action.get("alert", True):
@@ -80,6 +85,14 @@ class RuleEngine:
                     )
                     alerts.append(alert)
         return alerts
+
+    def _is_valid_rule(self, rule: DetectionRule) -> bool:
+        if not rule.name or not isinstance(rule.match, dict):
+            return False
+        severity = str(rule.severity).upper()
+        if severity not in {"INFO", "WARNING", "HIGH", "CRITICAL"}:
+            return False
+        return True
 
     def _match_rule(self, packet: PacketInfo, rule: DetectionRule) -> bool:
         match = rule.match
@@ -122,6 +135,23 @@ class RuleEngine:
             threshold = match.get("threshold", 1024)
             if packet.dst_port is None or packet.dst_port <= threshold:
                 return False
+        elif condition == "high_entropy_subdomain":
+            if packet.protocol != "DNS" or not packet.dns_query:
+                return False
+            subdomain = packet.dns_query.split(".")[0] if "." in packet.dns_query else packet.dns_query
+            min_length = int(match.get("min_subdomain_length", 20))
+            threshold = float(match.get("entropy_threshold", 3.5))
+            if len(subdomain) <= min_length:
+                return False
+            entropy = shannon_entropy(subdomain)
+            packet.entropy = entropy
+            if entropy <= threshold:
+                return False
+        elif condition == "mac_change":
+            if packet.protocol != "ARP" or not packet.old_mac or not packet.new_mac:
+                return False
+        elif condition:
+            return False
 
         return True
 
