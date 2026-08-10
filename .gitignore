@@ -34,4 +34,6 @@ htmlcov/
 dist/
 build/
 
+.agents
+.gemini
 
