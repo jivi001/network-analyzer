@@ -1,7 +1,0 @@
-core
-detection
-network
-sentinel
-storage
-tui
-utils
