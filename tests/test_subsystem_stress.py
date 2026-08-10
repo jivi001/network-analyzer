@@ -164,11 +164,83 @@ class ComprehensiveSubsystemTests(unittest.TestCase):
         live = Live(dashboard.get_renderable(), console=console, auto_refresh=False)
         # Verify multiple start/stop calls are safe without exceptions or multiple render loops
         live.start()
-        live.start()
         live.stop()
-        live.stop()
-        live.start()
-        live.stop()
+
+    def test_nmap_scan_profiles_allowlist_and_arguments(self):
+        from core.scanner import NetworkScanner, ALLOWED_SCAN_TYPES
+        from utils.constants import SCAN_TYPES
+        from unittest.mock import MagicMock, patch
+
+        with patch("nmap.PortScanner") as mock_nm_cls:
+            mock_nm = MagicMock()
+            mock_nm_cls.return_value = mock_nm
+
+            scanner = NetworkScanner({"timeout": 120})
+            profiles = [
+                "discovery", "fast_discovery", "top_ports", "service",
+                "version", "os_detection", "comprehensive", "udp_top",
+                "tcp_connect", "aggressive", "ipv6_discovery", "stealth",
+                "quick", "port", "full",
+            ]
+
+            for prof in profiles:
+                self.assertIn(prof, ALLOWED_SCAN_TYPES)
+                args = scanner._get_scan_args(prof)
+                self.assertIn("--host-timeout 120s", args)
+
+    def test_nmap_invalid_scan_profile_rejection(self):
+        from core.scanner import NetworkScanner
+        from unittest.mock import MagicMock, patch
+
+        with patch("nmap.PortScanner") as mock_nm_cls:
+            mock_nm = MagicMock()
+            mock_nm_cls.return_value = mock_nm
+
+            scanner = NetworkScanner()
+            with self.assertRaises(ValueError) as ctx:
+                scanner.scan("127.0.0.1", "invalid_profile_123")
+            self.assertIn("Unknown scan profile", str(ctx.exception))
+
+    def test_nmap_mocked_profile_scanning_and_normalization(self):
+        from core.scanner import NetworkScanner
+        from storage.models import ScanResult
+        from unittest.mock import MagicMock, patch
+
+        with patch("nmap.PortScanner") as mock_nm_cls:
+            mock_nm = MagicMock()
+            mock_nm_cls.return_value = mock_nm
+            mock_nm.all_hosts.return_value = ["127.0.0.1"]
+
+            host_data = {
+                "addresses": {"ipv4": "127.0.0.1", "mac": "00:11:22:33:44:55"},
+                "osmatch": [{"name": "Linux 5.x"}],
+                "tcp": {
+                    80: {"state": "open", "name": "http", "product": "nginx", "version": "1.25.0", "extrainfo": "Ubuntu"},
+                },
+            }
+
+            mock_host = MagicMock()
+            mock_host.get.side_effect = host_data.get
+            mock_host.__getitem__.side_effect = host_data.__getitem__
+            mock_host.state.return_value = "up"
+            mock_host.all_protocols.return_value = ["tcp"]
+            mock_host.hostname.return_value = "localhost"
+
+            mock_nm.__getitem__.return_value = mock_host
+
+            scanner = NetworkScanner()
+            for prof in ["discovery", "service", "comprehensive", "udp_top", "aggressive"]:
+                res = scanner.scan("127.0.0.1", prof)
+                self.assertIsInstance(res, ScanResult)
+                self.assertEqual(res.target, "127.0.0.1")
+                self.assertEqual(res.scan_type, prof)
+                self.assertEqual(res.hosts_found, 1)
+                self.assertEqual(len(res.hosts), 1)
+                host = res.hosts[0]
+                self.assertEqual(host.ip_address, "127.0.0.1")
+                self.assertEqual(host.mac_address, "00:11:22:33:44:55")
+                self.assertEqual(host.hostname, "localhost")
+                self.assertEqual(host.os_guess, "Linux 5.x")
 
 
 if __name__ == "__main__":

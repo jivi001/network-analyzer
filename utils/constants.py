@@ -91,27 +91,115 @@ TCP_FLAGS = {
     "C": "CWR",
 }
 
-# Nmap scan type arguments
+# Nmap scan type definitions and metadata
 SCAN_TYPES = {
+    "discovery": {
+        "name": "Live Host Discovery",
+        "args": "-sn",
+        "description": "Ping sweep - discover live hosts without port scanning (-sn)",
+        "requires_admin": False,
+        "cost": "Low / Fast",
+    },
+    "fast_discovery": {
+        "name": "Fast Discovery",
+        "args": "-sn -T4",
+        "description": "Accelerated ping sweep host discovery (-sn -T4)",
+        "requires_admin": False,
+        "cost": "Low / Very Fast",
+    },
+    "top_ports": {
+        "name": "TCP Top Ports",
+        "args": "-sS --top-ports 1000",
+        "description": "SYN scan top 1000 TCP ports (-sS)",
+        "requires_admin": True,
+        "cost": "Moderate / Fast",
+    },
+    "service": {
+        "name": "Service Detection",
+        "args": "-sS -sV --top-ports 1000",
+        "description": "SYN scan with service version identification (-sS -sV)",
+        "requires_admin": True,
+        "cost": "Moderate",
+    },
+    "version": {
+        "name": "Version Enumeration",
+        "args": "-sV --top-ports 1000",
+        "description": "Probe open ports for service version details (-sV)",
+        "requires_admin": False,
+        "cost": "Moderate",
+    },
+    "os_detection": {
+        "name": "OS Detection",
+        "args": "-sS -O --top-ports 1000",
+        "description": "TCP/IP stack fingerprinting for OS identification (-sS -O)",
+        "requires_admin": True,
+        "cost": "Moderate / Requires Admin",
+    },
+    "comprehensive": {
+        "name": "Comprehensive Scan",
+        "args": "-sS -sV -O --top-ports 1000",
+        "description": "Combined SYN, version, and OS detection (-sS -sV -O)",
+        "requires_admin": True,
+        "cost": "High",
+    },
+    "udp_top": {
+        "name": "UDP Top Ports",
+        "args": "-sU --top-ports 100",
+        "description": "UDP scan top 100 ports (-sU). Can be slow due to rate limiting.",
+        "requires_admin": True,
+        "cost": "High / Slow",
+        "warning": "UDP scanning can take considerably longer than TCP scanning.",
+    },
+    "tcp_connect": {
+        "name": "TCP Connect Scan",
+        "args": "-sT --top-ports 1000",
+        "description": "Full unprivileged TCP connect scan (-sT)",
+        "requires_admin": False,
+        "cost": "Moderate",
+    },
+    "aggressive": {
+        "name": "Aggressive Assessment",
+        "args": "-A --top-ports 1000",
+        "description": "OS, version, script, and traceroute (-A). High traffic volume.",
+        "requires_admin": True,
+        "cost": "High / Loud",
+        "warning": "Advanced scan — may generate significantly more traffic and take longer. Use only against authorized targets.",
+    },
+    "ipv6_discovery": {
+        "name": "IPv6 Host Discovery",
+        "args": "-6 -sn",
+        "description": "Ping sweep over IPv6 (-6 -sn)",
+        "requires_admin": False,
+        "cost": "Low / Fast",
+    },
+    "stealth": {
+        "name": "Stealth Scan",
+        "args": "-sS -T2 --top-ports 100",
+        "description": "Slow, evasive SYN scan top 100 ports (-sS -T2)",
+        "requires_admin": True,
+        "cost": "Slow / Low Traffic",
+    },
+    # Backward compatibility aliases
     "quick": {
         "name": "Quick Discovery",
         "args": "-sn",
         "description": "Ping sweep - discover live hosts only",
+        "requires_admin": False,
+        "cost": "Low / Fast",
     },
     "port": {
         "name": "Port Scan",
         "args": "-sS --top-ports 1000",
         "description": "SYN scan top 1000 ports",
+        "requires_admin": True,
+        "cost": "Moderate / Fast",
     },
     "full": {
         "name": "Full Scan",
-        "args": "-sV -O --top-ports 1000",
+        "args": "-sS -sV -O --top-ports 1000",
         "description": "Service version + OS detection",
-    },
-    "stealth": {
-        "name": "Stealth Scan",
-        "args": "-sS -T2 --top-ports 100",
-        "description": "Slow, evasive SYN scan",
+        "requires_admin": True,
+        "cost": "High",
     },
 }
 

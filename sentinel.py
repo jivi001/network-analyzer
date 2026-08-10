@@ -581,35 +581,11 @@ def run_network_scan(config: dict, db: Database):
 
     scanner = NetworkScanner()
 
-    console.print()
-    display_scan_progress(target, scan_type)
+    display_scan_progress(target, scan_type, scanner._get_scan_args(scan_type))
 
     try:
-        if scan_type == "quick":
-            hosts = scanner.ping_sweep(target)
-            from storage.models import ScanResult
-
-            result = ScanResult(
-                session_id=session_id,
-                target=target,
-                scan_type=scan_type,
-                hosts_found=len(hosts),
-                hosts=hosts,
-                start_time=session.start_time,
-                end_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            )
-        else:
-            if scan_type == "port":
-                result = scanner.port_scan(target)
-            elif scan_type == "full":
-                result = scanner.full_scan(target)
-            elif scan_type == "stealth":
-                result = scanner.stealth_scan(target)
-            else:
-                result = scanner.port_scan(target)
-
-            result.session_id = session_id
-
+        result = scanner.scan(target, scan_type)
+        result.session_id = session_id
     except Exception as e:
         from rich.markup import escape
         console.print(f"[bold red]Scan error:[/bold red] {escape(str(e))}")
@@ -822,7 +798,14 @@ Examples:
     parser.add_argument(
         "--capture", action="store_true", help="Jump directly to live capture mode"
     )
-    parser.add_argument("--scan", type=str, help="Scan a target IP or subnet")
+    parser.add_argument("--scan", type=str, help="Scan a target IP, subnet, or hostname")
+    parser.add_argument(
+        "--profile",
+        "--scan-profile",
+        type=str,
+        default="top_ports",
+        help="Scan profile for --scan (default: top_ports)",
+    )
     parser.add_argument("--pcap", type=str, help="Analyze a PCAP file")
     parser.add_argument(
         "--mask", action="store_true", help="Enable IP privacy masking"
@@ -878,10 +861,10 @@ def main():
 
         if args.scan:
             console.print(APP_BANNER)
-            # Quick scan from CLI
             if not check_nmap_installed():
                 return
             scanner = NetworkScanner()
+            scan_type = args.profile or "top_ports"
             session = SessionInfo(
                 session_type="scan",
                 start_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -889,8 +872,8 @@ def main():
                 status="active",
             )
             session_id = db.create_session(session)
-            display_scan_progress(args.scan, "port")
-            result = scanner.port_scan(args.scan)
+            display_scan_progress(args.scan, scan_type, scanner._get_scan_args(scan_type))
+            result = scanner.scan(args.scan, scan_type)
             result.session_id = session_id
             db.save_scan_result(result)
             for host in result.hosts:

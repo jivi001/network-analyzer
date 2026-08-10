@@ -1,5 +1,5 @@
 import os
-from typing import Dict
+from typing import Dict, Optional
 
 from rich import box
 from rich.align import Align
@@ -64,24 +64,66 @@ def prompt_capture_settings() -> Dict[str, str]:
     }
 
 
-def prompt_scan_settings() -> Dict[str, str]:
-    """Ask for target IP/subnet and scan type."""
+def prompt_scan_settings() -> Optional[Dict[str, str]]:
+    """Ask for target IP/subnet and scan profile from the enhanced list."""
     clear_screen()
     console.print("[bold cyan]Network Scan Settings[/bold cyan]")
-    while True:
-        target = Prompt.ask("Target IP or Subnet (e.g., 192.168.1.0/24)")
-        if target:
-            break
-        console.print("[red]Target is required.[/red]")
+    console.print("[dim]Scan only systems and networks you own or are explicitly authorized to assess.[/dim]")
+    console.print()
 
-    scan_type = Prompt.ask(
-        "Scan Type",
-        choices=["quick", "port", "full", "stealth"],
-        default="quick",
-    )
+    target = Prompt.ask("Target IP, Subnet, or Hostname (e.g. 192.168.1.0/24, ::1, example.com)")
+    if not target or not target.strip():
+        console.print("[red]Target is required.[/red]")
+        return None
+
+    console.print()
+    console.print("[bold cyan]Select Scan Profile:[/bold cyan]")
+    console.print("  [1] Live Host Discovery   (-sn)")
+    console.print("  [2] Fast Discovery        (-sn -T4)")
+    console.print("  [3] TCP Top Ports         (-sS --top-ports 1000)")
+    console.print("  [4] Service Detection     (-sS -sV --top-ports 1000)")
+    console.print("  [5] Version Enumeration   (-sV --top-ports 1000)")
+    console.print("  [6] OS Detection          (-sS -O --top-ports 1000)")
+    console.print("  [7] Comprehensive         (-sS -sV -O --top-ports 1000)")
+    console.print("  [8] UDP Top Ports         (-sU --top-ports 100 - Slow)")
+    console.print("  [9] TCP Connect           (-sT --top-ports 1000)")
+    console.print("  [A] Aggressive Assessment (-A --top-ports 1000 - Advanced)")
+    console.print("  [B] IPv6 Discovery        (-6 -sn)")
+    console.print("  [S] Stealth Scan          (-sS -T2 --top-ports 100)")
+    console.print()
+
+    choice_map = {
+        "1": "discovery",
+        "2": "fast_discovery",
+        "3": "top_ports",
+        "4": "service",
+        "5": "version",
+        "6": "os_detection",
+        "7": "comprehensive",
+        "8": "udp_top",
+        "9": "tcp_connect",
+        "a": "aggressive",
+        "b": "ipv6_discovery",
+        "s": "stealth",
+    }
+
+    choice = Prompt.ask(
+        "Select profile",
+        choices=list(choice_map.keys()),
+        default="3",
+    ).lower()
+
+    scan_type = choice_map.get(choice, "top_ports")
+
+    from utils.constants import SCAN_TYPES
+    profile_info = SCAN_TYPES.get(scan_type, {})
+    if profile_info.get("warning"):
+        console.print(f"\n[bold yellow]⚠️ WARNING:[/bold yellow] {profile_info['warning']}")
+    if profile_info.get("requires_admin"):
+        console.print("[dim yellow]Note: This scan type may require Administrator/root privileges.[/dim yellow]")
 
     return {
-        "target": target,
+        "target": target.strip(),
         "scan_type": scan_type,
     }
 

@@ -11,19 +11,38 @@ from storage.models import ScanResult, HostInfo
 from utils.console import console
 
 
-def display_scan_progress(target: str, scan_type: str):
-    """Show Rich spinner during scan."""
-    console.print(f"[cyan]Initiating {scan_type} scan on {target}...[/cyan]")
+def display_scan_progress(target: str, scan_type: str, scan_args: str = ""):
+    """Show rich panel during scan execution."""
+    from utils.constants import SCAN_TYPES
+    profile_info = SCAN_TYPES.get(scan_type, {})
+    profile_name = profile_info.get("name", scan_type)
+    args_str = scan_args or profile_info.get("args", "")
+
+    console.print()
+    console.print(
+        Panel(
+            f"Target: [bold cyan]{target}[/bold cyan]\n"
+            f"Profile: [bold yellow]{profile_name}[/bold yellow] ({scan_type})\n"
+            f"Arguments: [dim]{args_str}[/dim]\n"
+            f"Status: [bold green]Running...[/bold green]",
+            title="SCAN IN PROGRESS",
+            border_style="cyan",
+            box=box.ASCII,
+        )
+    )
+    console.print()
 
 
 def display_scan_results(result: ScanResult):
     """Render scan results as Rich tables."""
     console.clear()
+    from utils.constants import SCAN_TYPES
+    profile_name = SCAN_TYPES.get(result.scan_type, {}).get("name", result.scan_type)
 
     # Summary panel
     summary_text = (
         f"Target: [bold cyan]{result.target}[/bold cyan]\n"
-        f"Scan Type: [bold cyan]{result.scan_type}[/bold cyan]\n"
+        f"Profile: [bold cyan]{profile_name}[/bold cyan] ({result.scan_type})\n"
         f"Scan Arguments: [dim]{result.scan_args}[/dim]\n"
         f"Hosts Found: [bold green]{result.hosts_found}[/bold green]\n"
         f"Duration: [bold yellow]{result.duration_sec:.2f}s[/bold yellow]"
@@ -39,7 +58,7 @@ def display_scan_results(result: ScanResult):
     console.print()
 
     if not result.hosts:
-        console.print("[yellow]No active hosts found matching criteria.[/yellow]")
+        console.print("[yellow]No hosts found.[/yellow]")
         return
 
     # Host table

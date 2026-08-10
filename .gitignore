@@ -27,3 +27,11 @@ export_test.json
 .coverage
 htmlcov/
 
+# Build, egg, and distribution artifacts
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+
+
