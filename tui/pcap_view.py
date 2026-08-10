@@ -2,7 +2,6 @@ import time
 from typing import List
 
 from rich import box
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.progress import Progress
@@ -10,9 +9,8 @@ from rich.text import Text
 
 from storage.models import PacketInfo, StatsSnapshot, AlertInfo
 from utils.constants import format_bytes
+from utils.console import console
 from tui.helpers import protocol_badge, severity_badge, build_bar, format_elapsed
-
-console = Console()
 
 
 def display_pcap_loading(filepath: str):

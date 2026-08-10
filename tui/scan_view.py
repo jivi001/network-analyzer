@@ -2,15 +2,13 @@ import time
 from typing import List
 
 from rich import box
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.text import Text
 
 from storage.models import ScanResult, HostInfo
-
-console = Console()
+from utils.console import console
 
 
 def display_scan_progress(target: str, scan_type: str):

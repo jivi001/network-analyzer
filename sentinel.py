@@ -22,6 +22,7 @@ import threading
 from collections import deque
 from datetime import datetime
 from queue import Empty, Full, Queue
+from typing import Optional, List, Dict, Set, Any
 
 if sys.platform == 'win32':
     try:
@@ -29,12 +30,12 @@ if sys.platform == 'win32':
     except AttributeError:
         pass
 
-from rich.console import Console
 from rich.live import Live
 from rich.prompt import Prompt, Confirm
 
 # my-sentinel modules
 from utils.constants import APP_BANNER, APP_VERSION, APP_NAME, DASHBOARD_REFRESH_MS
+from utils.console import console
 from utils.privileges import check_privileges, check_nmap_installed, check_npcap_installed
 from utils.privacy import PrivacyFilter
 
@@ -73,8 +74,6 @@ from tui.history_view import (
 )
 from tui.helpers import format_elapsed
 
-console = Console()
-
 
 import logging
 import shutil
@@ -97,6 +96,33 @@ def _validate_config(config: dict) -> dict:
         except (ValueError, TypeError):
             logger.warning(f"Config '{key}' invalid. Resetting to {default}.")
             val = default
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+
+def get_absolute_path(path_str: str) -> str:
+    """Resolve a relative path against PROJECT_ROOT."""
+    if not path_str:
+        return path_str
+    if os.path.isabs(path_str):
+        return path_str
+    return os.path.abspath(os.path.join(PROJECT_ROOT, path_str))
+
+
+def _validate_config(config: dict) -> dict:
+    """Validate configuration bounds and resolve paths."""
+    validated = config.copy()
+
+    def _check_int(key: str, min_val: int, max_val: int, default_val: int):
+        val = validated.get(key, default_val)
+        if not isinstance(val, int) or isinstance(val, bool):
+            try:
+                val = int(val)
+            except (ValueError, TypeError):
+                logger.warning(f"Config '{key}' invalid. Resetting to {default_val}.")
+                val = default_val
+        if val < min_val or val > max_val:
+            logger.warning(f"Config '{key}' value {val} out of range [{min_val}, {max_val}]. Resetting to {default_val}.")
+            val = default_val
         validated[key] = val
 
     _check_int("packet_buffer_size", 10, 10000, 500)
@@ -105,37 +131,47 @@ def _validate_config(config: dict) -> dict:
     _check_int("dedup_window", 1, 3600, 60)
     _check_int("max_alerts", 10, 100000, 100)
 
-    if not isinstance(validated.get("database_path"), str) or not validated["database_path"].strip():
-        validated["database_path"] = "sentinel_data.db"
+    db_p = validated.get("database_path")
+    if not isinstance(db_p, str) or not db_p.strip():
+        db_p = "sentinel_data.db"
+    validated["database_path"] = get_absolute_path(db_p)
 
-    if not isinstance(validated.get("export_directory"), str) or not validated["export_directory"].strip():
-        validated["export_directory"] = "exports"
+    exp_d = validated.get("export_directory")
+    if not isinstance(exp_d, str) or not exp_d.strip():
+        exp_d = "exports"
+    validated["export_directory"] = get_absolute_path(exp_d)
 
-    if not isinstance(validated.get("rules_directory"), str) or not validated["rules_directory"].strip():
-        validated["rules_directory"] = "rules"
+    rules_d = validated.get("rules_directory")
+    if not isinstance(rules_d, str) or not rules_d.strip():
+        rules_d = "rules"
+    validated["rules_directory"] = get_absolute_path(rules_d)
 
     return validated
 
 
-def load_config() -> dict:
+def load_config(config_path_override: Optional[str] = None) -> dict:
     """Load configuration from config.yaml if available, otherwise use defaults."""
     config = {
-        "database_path": "sentinel_data.db",
+        "database_path": get_absolute_path("sentinel_data.db"),
         "packet_buffer_size": 500,
         "packet_queue_size": 5000,
         "refresh_fps": 4,
         "default_filter": "",
         "privacy_mask": False,
-        "rules_directory": "rules",
+        "rules_directory": get_absolute_path("rules"),
         "dedup_window": 60,
         "max_alerts": 100,
-        "export_directory": "exports",
+        "export_directory": get_absolute_path("exports"),
     }
 
     try:
         import yaml
 
-        config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+        config_path = (
+            get_absolute_path(config_path_override)
+            if config_path_override
+            else get_absolute_path("config.yaml")
+        )
         if os.path.exists(config_path):
             with open(config_path, "r", encoding="utf-8") as f:
                 yaml_config = yaml.safe_load(f)
@@ -332,13 +368,6 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
         return processed
 
     # Start capture
-    console.print()
-    console.print(f"[bold green]Starting capture[/bold green] on {interface or 'default interface'}...")
-    if bpf_filter:
-        console.print(f"  Filter: [yellow]{bpf_filter}[/yellow]")
-    console.print("  Press [bold]Ctrl+C[/bold] to stop capture | [bold]P[/bold] to pause/resume display")
-    console.print()
-
     try:
         sniffer.start(
             interface=interface if interface else None,
@@ -352,6 +381,7 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
         paused = False
         recent_latencies: deque = deque(maxlen=10)
 
+        console.clear()
         with Live(
             dashboard.get_renderable(),
             console=console,
@@ -397,10 +427,12 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
                                     else:
                                         console.print(f"[bold red]Filter change failed:[/bold red] Invalid BPF syntax '{new_filter}'")
                                 except Exception as e:
-                                    console.print(f"[bold red]Filter change failed:[/bold red] {e}")
+                                    from rich.markup import escape
+                                    console.print(f"[bold red]Filter change failed:[/bold red] {escape(str(e))}")
                                 finally:
                                     live.start(refresh=True)
                             elif key == 'e':
+                                live.stop()
                                 exporter = Exporter()
                                 export_dir = config.get("export_directory", "exports")
                                 filename = exporter.generate_filename("capture", "json")
@@ -413,7 +445,10 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
                                     )
                                     console.print(f"[green]Exported to:[/green] {filepath}")
                                 except Exception as e:
-                                    console.print(f"[bold red]Export failed:[/bold red] {e}")
+                                    from rich.markup import escape
+                                    console.print(f"[bold red]Export failed:[/bold red] {escape(str(e))}")
+                                finally:
+                                    live.start(refresh=True)
 
                     time.sleep(refresh_interval)
                 except KeyboardInterrupt:
@@ -422,7 +457,8 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        console.print(f"[bold red]Error during capture:[/bold red] {e}")
+        from rich.markup import escape
+        console.print(f"[bold red]Error during capture:[/bold red] {escape(str(e))}")
     finally:
         # DETERMINISTIC SHUTDOWN SEQUENCE:
         # 1. Stop capture producer
@@ -508,7 +544,8 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
                     raise ValueError(f"Unsupported export format: {fmt}")
                 console.print(f"[green]Exported to:[/green] {filepath}")
             except Exception as e:
-                console.print(f"[bold red]Export failed:[/bold red] {e}")
+                from rich.markup import escape
+                console.print(f"[bold red]Export failed:[/bold red] {escape(str(e))}")
 
     # 7. Clean up temporary PCAP file
     if os.path.exists(temp_pcap_path):
@@ -574,7 +611,8 @@ def run_network_scan(config: dict, db: Database):
             result.session_id = session_id
 
     except Exception as e:
-        console.print(f"[bold red]Scan error:[/bold red] {e}")
+        from rich.markup import escape
+        console.print(f"[bold red]Scan error:[/bold red] {escape(str(e))}")
         db.end_session(session_id, 0, 0, 0)
         return
 
@@ -592,6 +630,8 @@ def run_network_scan(config: dict, db: Database):
 
     # Display results
     display_scan_results(result)
+    console.print()
+    Prompt.ask("Press Enter to return to main menu", default="")
 
 
 def run_pcap_analysis(config: dict, db: Database, privacy: PrivacyFilter):
@@ -609,11 +649,13 @@ def run_pcap_analysis(config: dict, db: Database, privacy: PrivacyFilter):
         packets = loader.load(filepath)
         stats_snapshot = loader.get_stats()
     except Exception as e:
-        console.print(f"[bold red]Error loading PCAP:[/bold red] {e}")
+        from rich.markup import escape
+        console.print(f"[bold red]Error loading PCAP:[/bold red] {escape(str(e))}")
         return
 
     if not packets:
         console.print("[yellow]No packets found in file.[/yellow]")
+        Prompt.ask("Press Enter to return to main menu", default="")
         return
 
     # Run detection retroactively
@@ -648,6 +690,8 @@ def run_pcap_analysis(config: dict, db: Database, privacy: PrivacyFilter):
 
     # Display results
     display_pcap_analysis(packets, stats_snapshot, alert_manager.get_all())
+    console.print()
+    Prompt.ask("Press Enter to return to main menu", default="")
 
 
 def run_history_viewer(db: Database):
@@ -672,9 +716,9 @@ def run_history_viewer(db: Database):
                     if session:
                         alerts = db.get_alerts(session_id=int(session_id))
                         display_session_detail(session, alerts)
-                Prompt.ask("Press Enter to continue", default="")
+                        Prompt.ask("Press Enter to return to history menu", default="")
             else:
-                Prompt.ask("Press Enter to continue", default="")
+                Prompt.ask("Press Enter to return to history menu", default="")
 
         elif choice == "2":
             # All alerts
@@ -687,20 +731,20 @@ def run_history_viewer(db: Database):
             else:
                 alerts = db.get_alerts(severity=severity.upper())
             display_alerts_history(alerts)
-            Prompt.ask("Press Enter to continue", default="")
+            Prompt.ask("Press Enter to return to history menu", default="")
 
         elif choice == "3":
             # Discovered hosts
             hosts = db.get_hosts()
             display_hosts_table(hosts)
-            Prompt.ask("Press Enter to continue", default="")
+            Prompt.ask("Press Enter to return to history menu", default="")
 
         elif choice == "4":
             # Search
             query = Prompt.ask("Search (IP address, date, or keyword)")
             sessions = db.search_sessions(query)
             display_sessions(sessions)
-            Prompt.ask("Press Enter to continue", default="")
+            Prompt.ask("Press Enter to return to history menu", default="")
 
         elif choice == "5":
             # Import JSON Data
@@ -716,7 +760,7 @@ def run_history_viewer(db: Database):
                 console.print(f"\n[red]Error: File '{filepath}' not found.[/red]")
             
             console.print()
-            Prompt.ask("Press Enter to continue")
+            Prompt.ask("Press Enter to return to history menu", default="")
 
         elif choice == "6" or choice == "":
             break
@@ -726,8 +770,8 @@ def run_settings(config: dict, privacy: PrivacyFilter):
     """
     Mode 5: Settings — View and modify configuration.
     """
-    console.print()
-    console.print("[bold]Current Settings[/bold]")
+    clear_screen()
+    console.print("[bold cyan]Current Settings[/bold cyan]")
     console.print()
 
     from rich.table import Table
@@ -756,6 +800,7 @@ def run_settings(config: dict, privacy: PrivacyFilter):
         console.print(f"[green]Privacy masking: {state}[/green]")
 
     console.print()
+    Prompt.ask("Press Enter to return to main menu", default="")
 
 
 def parse_args() -> argparse.Namespace:
@@ -788,6 +833,11 @@ Examples:
         help="Skip admin privilege check (some features may fail)",
     )
     parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to custom config.yaml file",
+    )
+    parser.add_argument(
         "--db",
         type=str,
         default="sentinel_data.db",
@@ -803,7 +853,7 @@ def main():
     args = parse_args()
 
     # Load configuration
-    config = load_config()
+    config = load_config(config_path_override=args.config)
 
     # Override config with CLI args
     if args.db:
@@ -858,7 +908,6 @@ def main():
 
         # Interactive menu mode
         while True:
-            console.clear()
             choice = show_main_menu()
 
             if choice == "1":
@@ -877,10 +926,6 @@ def main():
                 break
             else:
                 console.print("[yellow]Invalid option. Please select 1-6.[/yellow]")
-
-            if choice != "6":
-                console.print()
-                Prompt.ask("Press Enter to continue")
 
     except KeyboardInterrupt:
         console.print()

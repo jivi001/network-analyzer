@@ -1,7 +1,6 @@
 import time
 from typing import List, Optional
 
-from rich.console import Console
 from rich.layout import Layout
 from rich.panel import Panel
 from rich.table import Table
@@ -10,6 +9,7 @@ from rich.text import Text
 from storage.models import PacketInfo
 from utils.privacy import PrivacyFilter
 from utils.constants import APP_VERSION, format_bytes
+from utils.console import console
 from tui.helpers import (
     format_packet_row,
     protocol_badge,
@@ -18,8 +18,6 @@ from tui.helpers import (
     format_elapsed,
     truncate,
 )
-
-console = Console()
 
 
 class LiveDashboard:
@@ -97,9 +95,12 @@ class LiveDashboard:
         pkt_table.add_column("Service", width=10)
         pkt_table.add_column("Info")
 
-        for pkt in reversed(self.packets_buffer):
-            row = format_packet_row(pkt, self.privacy_filter)
-            pkt_table.add_row(*row)
+        if not self.packets_buffer:
+            pkt_table.add_row("-", "-", "-", "[dim yellow]Waiting for live traffic...[/dim yellow]", "-", "-", "-", "-")
+        else:
+            for pkt in reversed(self.packets_buffer):
+                row = format_packet_row(pkt, self.privacy_filter)
+                pkt_table.add_row(*row)
 
         stream_title = "Packet Stream (Live)"
         if paused:
@@ -109,16 +110,15 @@ class LiveDashboard:
         )
 
         # Right Top Panel (Protocol Distribution)
-        proto_table = Table(show_header=True, expand=True, box=None)
-        proto_table.add_column("Protocol")
-        proto_table.add_column("Chart")
-        proto_table.add_column("%", justify="right")
-
         stats = self.stats_aggregator.get_snapshot()
         proto_stats = stats.protocol_counts
         total_pkts = stats.total_packets
 
         if total_pkts > 0:
+            proto_table = Table(show_header=True, expand=True, box=None)
+            proto_table.add_column("Protocol")
+            proto_table.add_column("Chart")
+            proto_table.add_column("%", justify="right")
             for proto, count in sorted(
                 proto_stats.items(), key=lambda x: x[1], reverse=True
             )[:5]:
@@ -128,59 +128,73 @@ class LiveDashboard:
                     build_bar(count, total_pkts, 15),
                     f"{pct:.1f}%",
                 )
-
-        self.layout["protocols"].update(
-            Panel(proto_table, title="Protocol Distribution")
-        )
+            self.layout["protocols"].update(
+                Panel(proto_table, title="Protocol Distribution")
+            )
+        else:
+            from rich.align import Align
+            self.layout["protocols"].update(
+                Panel(Align.center(Text("No traffic data", style="dim yellow")), title="Protocol Distribution")
+            )
 
         # Right Bottom Panel (Top Talkers)
-        talkers_table = Table(show_header=True, expand=True, box=None)
-        talkers_table.add_column("IP")
-        talkers_table.add_column("Packets")
-        talkers_table.add_column("Bytes")
-        talkers_table.add_column("Chart")
-
         top_ips = stats.top_talkers  # list of dicts [{'ip': ..., 'bytes': ..., 'packets': ...}]
-        max_bytes = max([item["bytes"] for item in top_ips]) if top_ips else 0
+        if top_ips:
+            talkers_table = Table(show_header=True, expand=True, box=None)
+            talkers_table.add_column("IP")
+            talkers_table.add_column("Packets")
+            talkers_table.add_column("Bytes")
+            talkers_table.add_column("Chart")
+            max_bytes = max([item["bytes"] for item in top_ips]) if top_ips else 0
 
-        for item in top_ips:
-            ip_raw = item["ip"]
-            ip_str = (
-                self.privacy_filter.ip(ip_raw)
-                if self.privacy_filter and self.privacy_filter.enabled
-                else ip_raw
+            for item in top_ips:
+                ip_raw = item["ip"]
+                ip_str = (
+                    self.privacy_filter.ip(ip_raw)
+                    if self.privacy_filter and self.privacy_filter.enabled
+                    else ip_raw
+                )
+                talkers_table.add_row(
+                    ip_str,
+                    str(item["packets"]),
+                    format_bytes(item["bytes"]),
+                    build_bar(item["bytes"], max_bytes, 10),
+                )
+            self.layout["top_talkers"].update(Panel(talkers_table, title="Top Talkers"))
+        else:
+            from rich.align import Align
+            self.layout["top_talkers"].update(
+                Panel(Align.center(Text("No traffic observed", style="dim yellow")), title="Top Talkers")
             )
-            talkers_table.add_row(
-                ip_str,
-                str(item["packets"]),
-                format_bytes(item["bytes"]),
-                build_bar(item["bytes"], max_bytes, 10),
-            )
-
-        self.layout["top_talkers"].update(Panel(talkers_table, title="Top Talkers"))
 
         # Alerts Panel
-        alerts_table = Table(show_header=True, expand=True, box=None)
-        alerts_table.add_column("Time", width=12)
-        alerts_table.add_column("Severity", width=12)
-        alerts_table.add_column("Message")
-
+        from rich.markup import escape
         recent_alerts = self.alert_manager.get_recent(n=5)
-        for alert in recent_alerts:
-            alerts_table.add_row(
-                alert.timestamp_str or "",
-                severity_badge(alert.severity),
-                truncate(alert.message, 80),
-            )
 
         alerts_title = "Threat Alerts Feed"
         if degraded_subsystems:
             degraded_str = ", ".join(f"{k}:{v}" for k, v in degraded_subsystems.items())
-            alerts_title += f" [DEGRADED: {degraded_str}]"
+            alerts_title += f" [DEGRADED: {escape(degraded_str)}]"
 
-        self.layout["alerts"].update(
-            Panel(alerts_table, title=alerts_title, border_style="red")
-        )
+        if recent_alerts:
+            alerts_table = Table(show_header=True, expand=True, box=None)
+            alerts_table.add_column("Time", width=12)
+            alerts_table.add_column("Severity", width=12)
+            alerts_table.add_column("Message")
+            for alert in recent_alerts:
+                alerts_table.add_row(
+                    alert.timestamp_str or "",
+                    severity_badge(alert.severity),
+                    escape(truncate(alert.message, 80)),
+                )
+            self.layout["alerts"].update(
+                Panel(alerts_table, title=alerts_title, border_style="red")
+            )
+        else:
+            from rich.align import Align
+            self.layout["alerts"].update(
+                Panel(Align.center(Text("No security alerts detected", style="dim green")), title=alerts_title, border_style="green")
+            )
 
         # Calculate Queue Utilization and Health
         queue_util = (queue_depth / queue_capacity * 100) if queue_capacity > 0 else 0
@@ -195,9 +209,10 @@ class LiveDashboard:
             health_str = "[bold green]HEALTHY[/bold green]"
 
         # Footer Bar
+        drop_style = "bold red" if dropped_count > 0 else "bold white"
         footer_text = (
             f"Pkts: [bold]{stats.total_packets:,}[/bold] | "
-            f"Dropped: [bold {'red' if dropped_count > 0 else 'white'}]{dropped_count:,}[/bold] | "
+            f"Dropped: [{drop_style}]{dropped_count:,}[/{drop_style}] | "
             f"Queue: [bold]{queue_depth}/{queue_capacity}[/bold] ({queue_util:.0f}%) | "
             f"Health: {health_str} | "
             f"Rate: [bold]{stats.packets_per_sec:.1f} pps[/bold] | "

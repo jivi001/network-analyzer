@@ -32,6 +32,10 @@ class Exporter:
         if not filename or filename in (".", ".."):
             raise ValueError(f"Invalid export filename: '{filepath}'")
         
+        if not os.path.isabs(export_dir):
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            export_dir = os.path.abspath(os.path.join(base_dir, export_dir))
+
         # Ensure export_dir exists
         self.ensure_export_dir(export_dir)
 
@@ -46,6 +50,9 @@ class Exporter:
 
     def ensure_export_dir(self, directory: str = "exports"):
         """Create directory if needed."""
+        if not os.path.isabs(directory):
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            directory = os.path.abspath(os.path.join(base_dir, directory))
         os.makedirs(directory, exist_ok=True)
 
     def generate_filename(self, prefix: str, extension: str) -> str:

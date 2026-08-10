@@ -1,3 +1,15 @@
+Metadata-Version: 2.4
+Name: my-sentinel
+Version: 1.0.0
+Summary: Network Traffic Analyzer & Security TUI
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: scapy>=2.5.0
+Requires-Dist: rich>=13.0
+Requires-Dist: python-nmap>=0.7.1
+Requires-Dist: ipwhois>=1.2.0
+Requires-Dist: pyyaml>=6.0
+
 # 🛡️ my-sentinel
 
 **A comprehensive, menu-driven CLI network traffic analyzer and security scanner built with Python.**
@@ -57,62 +69,43 @@ Combines live packet capture, Nmap scanning, PCAP forensics, and threat detectio
 - **Npcap** (Windows) or **libpcap** (Linux/macOS) for raw packet capture
 - **Elevated privileges** — Administrator (Windows) or root (Linux/macOS)
 
-## 🚀 Installation & Setup
+## 🚀 Installation
 
-### Option 1: Automatic Installer (Recommended for Windows)
-
-Run the included automated installer script in PowerShell:
-
-```powershell
-cd D:\Programs\Security\network-analyzer
-.\install.ps1
+1. **Clone or download the repository:**
+```bash
+git clone <your-repo-url>
+cd network-analyzer
 ```
 
-Or double-click `install.bat`. This automatically:
-1. Initializes `.venv` virtual environment if needed.
-2. Installs `my-sentinel` in editable mode (`pip install -e .`).
-3. Adds `.venv\Scripts` to User PATH.
-
-After running `install.ps1`, you can launch the application from **any directory** simply by typing:
-
-```powershell
-sentinel
+2. **Create a virtual environment:**
+```bash
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# Linux/macOS
+source .venv/bin/activate
 ```
 
-### Option 2: Manual Editable Installation
-
-```powershell
-cd D:\Programs\Security\network-analyzer
-.venv\Scripts\python.exe -m pip install -e .
+3. **Install Python dependencies:**
+```bash
+pip install -r requirements.txt
 ```
 
-Verify installation location:
+4. **Run with elevated privileges:**
+```bash
+# Windows — Run terminal as Administrator
+python sentinel.py
 
-```powershell
-Get-Command sentinel
+# Linux/macOS
+sudo python sentinel.py
 ```
 
 ---
 
 ## 📖 Usage
 
-### Launch from Any Directory
-```powershell
-sentinel
-```
-
-### Direct Mode (CLI Flags)
-```powershell
-sentinel --capture              # Jump directly to live capture mode
-sentinel --scan 192.168.1.0/24  # Quick scan subnet
-sentinel --pcap capture.pcap    # Analyze PCAP file
-sentinel --mask                 # Enable privacy masking
-sentinel --config path/cfg.yaml # Custom config file path
-sentinel --version              # Show version info
-```
-
-### Developer Fallback
-```powershell
+### Interactive Menu Mode
+```bash
 python sentinel.py
 ```
 

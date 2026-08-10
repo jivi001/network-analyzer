@@ -15,7 +15,7 @@ logs/
 
 # Graphify knowledge graph
 graphify-out/
-
+GEMINI.md
 # Test databases & test execution artifacts
 *.db
 *.db-shm

@@ -1,11 +1,12 @@
 import time
 from datetime import datetime
+from typing import Optional
 from scapy.all import Ether, IP, TCP, UDP, ICMP, ARP, DNS, DNSQR
 from storage.models import PacketInfo
 from utils.constants import resolve_service, TCP_FLAGS
 
 
-def process_packet(raw_packet, packet_id: int) -> PacketInfo:
+def process_packet(raw_packet, packet_id: int) -> Optional[PacketInfo]:
     """
     Decodes a raw Scapy packet into a PacketInfo dataclass.
 
@@ -14,13 +15,18 @@ def process_packet(raw_packet, packet_id: int) -> PacketInfo:
         packet_id (int): A unique identifier for the packet.
 
     Returns:
-        PacketInfo: The decoded packet information.
+        PacketInfo: The decoded packet information or None if raw_packet is invalid.
     """
-    ts_float = float(raw_packet.time) if hasattr(raw_packet, "time") else time.time()
-    dt = datetime.fromtimestamp(ts_float)
-    timestamp_str = dt.strftime("%H:%M:%S.") + f"{dt.microsecond // 1000:03d}"
-    date_str = dt.strftime("%Y-%m-%d")
-    length = len(raw_packet)
+    if raw_packet is None or not hasattr(raw_packet, "haslayer"):
+        return None
+    try:
+        ts_float = float(raw_packet.time) if hasattr(raw_packet, "time") else time.time()
+        dt = datetime.fromtimestamp(ts_float)
+        timestamp_str = dt.strftime("%H:%M:%S.") + f"{dt.microsecond // 1000:03d}"
+        date_str = dt.strftime("%Y-%m-%d")
+        length = len(raw_packet) if hasattr(raw_packet, "__len__") else 0
+    except Exception:
+        return None
 
     src_mac = ""
     dst_mac = ""

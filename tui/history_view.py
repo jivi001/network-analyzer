@@ -2,7 +2,6 @@ from typing import List
 
 from rich import box
 from rich.align import Align
-from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
@@ -11,9 +10,8 @@ from rich.text import Text
 from storage.models import AlertInfo, HostInfo, SessionInfo
 from tui.helpers import format_alert_row, format_host_row
 from utils.constants import format_bytes
+from utils.console import console
 from tui.menu import clear_screen
-
-console = Console()
 
 
 def display_history_menu() -> str:
@@ -53,7 +51,7 @@ def display_sessions(sessions: List[SessionInfo]):
     """Rich table of sessions."""
     clear_screen()
     if not sessions:
-        console.print(Panel("[yellow]No sessions recorded yet.[/yellow]", title="Recent Sessions", box=box.ASCII))
+        console.print(Panel("[yellow]No capture history available[/yellow]", title="Recent Sessions", box=box.ASCII))
         return
 
     table = Table(title="Recent Sessions History", show_header=True, header_style="bold magenta", expand=True, box=box.ASCII)
@@ -85,7 +83,7 @@ def display_alerts_history(alerts: List[AlertInfo]):
     """Display alert table."""
     clear_screen()
     if not alerts:
-        console.print(Panel("[yellow]No alerts recorded in database.[/yellow]", title="Security Alerts", box=box.ASCII))
+        console.print(Panel("[green]No security alerts detected[/green]", title="Security Alerts", box=box.ASCII))
         return
 
     table = Table(title=f"Security Alerts ({len(alerts)})", show_header=True, header_style="bold red", expand=True, box=box.ASCII)
@@ -106,7 +104,7 @@ def display_hosts_table(hosts: List[HostInfo]):
     """Discovered hosts table."""
     clear_screen()
     if not hosts:
-        console.print(Panel("[yellow]No discovered hosts recorded yet.[/yellow]", title="Discovered Hosts", box=box.ASCII))
+        console.print(Panel("[yellow]No hosts observed[/yellow]", title="Discovered Hosts", box=box.ASCII))
         return
 
     table = Table(title=f"Discovered Hosts ({len(hosts)})", show_header=True, header_style="bold green", expand=True, box=box.ASCII)

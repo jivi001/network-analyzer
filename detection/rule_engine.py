@@ -15,6 +15,9 @@ class RuleEngine:
     """Loads and evaluates detection rules against packets."""
 
     def __init__(self, rules_dir: str = "rules"):
+        if not os.path.isabs(rules_dir):
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            rules_dir = os.path.abspath(os.path.join(base_dir, rules_dir))
         self.rules_dir = rules_dir
         self.rules: List[DetectionRule] = []
         self.load_rules()

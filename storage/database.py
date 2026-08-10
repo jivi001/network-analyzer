@@ -14,6 +14,10 @@ class Database:
 
     def __init__(self, db_path: str = "sentinel_data.db"):
         """Create/open SQLite database with WAL mode."""
+        import os
+        if not os.path.isabs(db_path):
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            db_path = os.path.abspath(os.path.join(base_dir, db_path))
         self.db_path = db_path
         self.lock = threading.RLock()
         self._local = threading.local()

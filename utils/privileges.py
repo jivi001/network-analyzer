@@ -6,9 +6,7 @@ Ensures the script runs with required admin/root permissions.
 import os
 import sys
 
-from rich.console import Console
-
-console = Console()
+from utils.console import console
 
 
 def check_privileges(require_exit: bool = True) -> bool:

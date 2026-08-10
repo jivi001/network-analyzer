@@ -3,20 +3,17 @@ from typing import Dict
 
 from rich import box
 from rich.align import Align
-from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.text import Text
 
 from utils.constants import APP_VERSION
-
-console = Console()
+from utils.console import console
 
 
 def clear_screen():
-    """Clear and separate terminal screens, including terminals that capture ANSI poorly."""
+    """Clear screen cleanly."""
     console.clear()
-    console.print()
 
 
 def show_main_menu() -> str:

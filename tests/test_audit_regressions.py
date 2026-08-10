@@ -199,7 +199,7 @@ class AuditRegressionTests(unittest.TestCase):
         self.assertEqual(validated["packet_buffer_size"], 500)
         self.assertEqual(validated["packet_queue_size"], 5000)
         self.assertEqual(validated["refresh_fps"], 4)
-        self.assertEqual(validated["database_path"], "sentinel_data.db")
+        self.assertTrue(validated["database_path"].endswith("sentinel_data.db"))
 
     def test_pipeline_exception_isolation(self):
         class BrokenRuleEngine:
