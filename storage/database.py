@@ -6,26 +6,42 @@ from datetime import datetime
 from storage.models import SessionInfo, AlertInfo, HostInfo, ScanResult, StatsSnapshot
 
 
+CURRENT_SCHEMA_VERSION = 2
+
+
 class Database:
     """SQLite Database Manager for my-sentinel."""
 
     def __init__(self, db_path: str = "sentinel_data.db"):
         """Create/open SQLite database with WAL mode."""
         self.db_path = db_path
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self._local = threading.local()
+        self._all_connections: List[sqlite3.Connection] = []
         self._create_tables()
 
     @property
     def conn(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn"):
-            self._local.conn = sqlite3.connect(
-                self.db_path, check_same_thread=False
+            conn = sqlite3.connect(
+                self.db_path, check_same_thread=False, timeout=5.0
             )
-            self._local.conn.row_factory = sqlite3.Row
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA busy_timeout=5000")
+            self._local.conn = conn
             with self.lock:
-                self._local.conn.execute("PRAGMA journal_mode=WAL")
+                self._all_connections.append(conn)
         return self._local.conn
+
+    def _safe_json_loads(self, val, default=None):
+        if not val:
+            return default if default is not None else []
+        try:
+            return json.loads(val)
+        except Exception:
+            return default if default is not None else []
 
     def _format_time(self, val) -> str:
         """Safely format a timestamp or string value for DB insertion."""
@@ -38,92 +54,103 @@ class Database:
         return str(val)
 
     def _create_tables(self):
-        """Create all tables if they don't exist."""
-        c = self.conn.cursor()
-        c.execute(
+        """Create all tables if they don't exist and run migrations."""
+        with self.lock:
+            c = self.conn.cursor()
+            c.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_type TEXT,
+                    start_time TEXT,
+                    end_time TEXT,
+                    packet_count INTEGER,
+                    total_bytes INTEGER,
+                    alert_count INTEGER,
+                    interface TEXT,
+                    filter_applied TEXT,
+                    status TEXT,
+                    target TEXT
+                )
             """
-            CREATE TABLE IF NOT EXISTS sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_type TEXT,
-                start_time TEXT,
-                end_time TEXT,
-                packet_count INTEGER,
-                total_bytes INTEGER,
-                alert_count INTEGER,
-                interface TEXT,
-                filter_applied TEXT,
-                status TEXT,
-                target TEXT
             )
-        """
-        )
-        c.execute(
+            c.execute(
+                """
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER,
+                    timestamp TEXT,
+                    severity TEXT,
+                    rule_name TEXT,
+                    message TEXT,
+                    src_ip TEXT,
+                    dst_ip TEXT,
+                    dst_port INTEGER,
+                    protocol TEXT,
+                    FOREIGN KEY(session_id) REFERENCES sessions(id)
+                )
             """
-            CREATE TABLE IF NOT EXISTS alerts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER,
-                timestamp TEXT,
-                severity TEXT,
-                rule_name TEXT,
-                message TEXT,
-                src_ip TEXT,
-                dst_ip TEXT,
-                dst_port INTEGER,
-                protocol TEXT,
-                FOREIGN KEY(session_id) REFERENCES sessions(id)
             )
-        """
-        )
-        c.execute(
+            c.execute(
+                """
+                CREATE TABLE IF NOT EXISTS discovered_hosts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ip_address TEXT UNIQUE,
+                    mac_address TEXT,
+                    hostname TEXT,
+                    open_ports TEXT,
+                    services TEXT,
+                    os_guess TEXT,
+                    first_seen TEXT,
+                    last_seen TEXT,
+                    source TEXT,
+                    packet_count INTEGER,
+                    byte_count INTEGER,
+                    state TEXT
+                )
             """
-            CREATE TABLE IF NOT EXISTS discovered_hosts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ip_address TEXT UNIQUE,
-                mac_address TEXT,
-                hostname TEXT,
-                open_ports TEXT,
-                services TEXT,
-                os_guess TEXT,
-                first_seen TEXT,
-                last_seen TEXT,
-                source TEXT,
-                packet_count INTEGER,
-                byte_count INTEGER,
-                state TEXT
             )
-        """
-        )
-        c.execute(
+            c.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scan_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER,
+                    target TEXT,
+                    scan_type TEXT,
+                    scan_args TEXT,
+                    hosts_found INTEGER,
+                    results TEXT,
+                    start_time TEXT,
+                    end_time TEXT,
+                    FOREIGN KEY(session_id) REFERENCES sessions(id)
+                )
             """
-            CREATE TABLE IF NOT EXISTS scan_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER,
-                target TEXT,
-                scan_type TEXT,
-                scan_args TEXT,
-                hosts_found INTEGER,
-                results TEXT,
-                start_time TEXT,
-                end_time TEXT,
-                FOREIGN KEY(session_id) REFERENCES sessions(id)
             )
-        """
-        )
-        c.execute(
+            c.execute(
+                """
+                CREATE TABLE IF NOT EXISTS packet_summaries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER,
+                    protocol_counts TEXT,
+                    top_talkers TEXT,
+                    total_packets INTEGER,
+                    total_bytes INTEGER,
+                    unique_hosts INTEGER,
+                    FOREIGN KEY(session_id) REFERENCES sessions(id)
+                )
             """
-            CREATE TABLE IF NOT EXISTS packet_summaries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER,
-                protocol_counts TEXT,
-                top_talkers TEXT,
-                total_packets INTEGER,
-                total_bytes INTEGER,
-                unique_hosts INTEGER,
-                FOREIGN KEY(session_id) REFERENCES sessions(id)
             )
-        """
-        )
-        self.conn.commit()
+            self._migrate(c)
+            self.conn.commit()
+
+    def _migrate(self, cursor: sqlite3.Cursor):
+        """Schema versioning migration."""
+        version = cursor.execute("PRAGMA user_version").fetchone()[0]
+        if version < 2:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_alerts_session_id ON alerts(session_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_scan_results_session_id ON scan_results(session_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_packet_summaries_session_id ON packet_summaries(session_id)")
+            cursor.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
 
     def create_session(self, session: SessionInfo) -> int:
         """Insert new session, return ID."""
@@ -439,8 +466,8 @@ class Database:
                     ip_address=r["ip_address"] or "",
                     mac_address=r["mac_address"] or "",
                     hostname=r["hostname"] or "",
-                    open_ports=json.loads(r["open_ports"]) if r["open_ports"] else [],
-                    services=json.loads(r["services"]) if r["services"] else {},
+                    open_ports=self._safe_json_loads(r["open_ports"], []),
+                    services=self._safe_json_loads(r["services"], {}),
                     os_guess=r["os_guess"] or "",
                     first_seen=r["first_seen"] or "",
                     last_seen=r["last_seen"] or "",
@@ -463,8 +490,8 @@ class Database:
             ip_address=r["ip_address"] or "",
             mac_address=r["mac_address"] or "",
             hostname=r["hostname"] or "",
-            open_ports=json.loads(r["open_ports"]) if r["open_ports"] else [],
-            services=json.loads(r["services"]) if r["services"] else {},
+            open_ports=self._safe_json_loads(r["open_ports"], []),
+            services=self._safe_json_loads(r["services"], {}),
             os_guess=r["os_guess"] or "",
             first_seen=r["first_seen"] or "",
             last_seen=r["last_seen"] or "",
@@ -505,8 +532,18 @@ class Database:
             res.append(si)
         return res
 
-    def close(self):
-        """Close the database connection."""
+    def close_all(self):
+        """Close all tracked database connections across threads."""
+        with self.lock:
+            for conn in list(self._all_connections):
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._all_connections.clear()
         if hasattr(self._local, "conn"):
-            self._local.conn.close()
             del self._local.conn
+
+    def close(self):
+        """Close the database connections."""
+        self.close_all()

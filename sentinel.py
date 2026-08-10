@@ -76,11 +76,53 @@ from tui.helpers import format_elapsed
 console = Console()
 
 
+import logging
+import shutil
+import tempfile
+
+logger = logging.getLogger(__name__)
+
+
+def _validate_config(config: dict) -> dict:
+    """Validates configuration values and applies safe defaults for invalid options."""
+    validated = dict(config)
+
+    def _check_int(key, min_val, max_val, default):
+        val = validated.get(key, default)
+        try:
+            val = int(val)
+            if val < min_val or val > max_val:
+                logger.warning(f"Config '{key}' value {val} out of range [{min_val}, {max_val}]. Resetting to {default}.")
+                val = default
+        except (ValueError, TypeError):
+            logger.warning(f"Config '{key}' invalid. Resetting to {default}.")
+            val = default
+        validated[key] = val
+
+    _check_int("packet_buffer_size", 10, 10000, 500)
+    _check_int("packet_queue_size", 100, 100000, 5000)
+    _check_int("refresh_fps", 1, 30, 4)
+    _check_int("dedup_window", 1, 3600, 60)
+    _check_int("max_alerts", 10, 100000, 100)
+
+    if not isinstance(validated.get("database_path"), str) or not validated["database_path"].strip():
+        validated["database_path"] = "sentinel_data.db"
+
+    if not isinstance(validated.get("export_directory"), str) or not validated["export_directory"].strip():
+        validated["export_directory"] = "exports"
+
+    if not isinstance(validated.get("rules_directory"), str) or not validated["rules_directory"].strip():
+        validated["rules_directory"] = "rules"
+
+    return validated
+
+
 def load_config() -> dict:
     """Load configuration from config.yaml if available, otherwise use defaults."""
     config = {
         "database_path": "sentinel_data.db",
         "packet_buffer_size": 500,
+        "packet_queue_size": 5000,
         "refresh_fps": 4,
         "default_filter": "",
         "privacy_mask": False,
@@ -95,20 +137,63 @@ def load_config() -> dict:
 
         config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
         if os.path.exists(config_path):
-            with open(config_path, "r") as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 yaml_config = yaml.safe_load(f)
 
-            if yaml_config:
-                # Flatten nested config
-                for section in yaml_config.values():
+            if isinstance(yaml_config, dict):
+                # Flatten nested config safely
+                for section_name, section in yaml_config.items():
                     if isinstance(section, dict):
                         config.update(section)
+                    else:
+                        config[section_name] = section
     except ImportError:
-        pass  # PyYAML not installed, use defaults
-    except Exception:
-        pass  # Config file issues, use defaults
+        logger.warning("PyYAML not installed, using default configuration.")
+    except Exception as e:
+        logger.warning(f"Error loading config.yaml: {e}. Using defaults.")
 
-    return config
+    return _validate_config(config)
+
+
+def validate_bpf_filter(bpf_filter: str) -> bool:
+    """Validate BPF filter syntax and tokens."""
+    if not bpf_filter or not bpf_filter.strip():
+        return True
+
+    filter_str = bpf_filter.strip()
+
+    # Check parenthetical balance
+    if filter_str.count("(") != filter_str.count(")"):
+        logger.error(f"BPF filter validation error: Unbalanced parentheses in '{filter_str}'")
+        return False
+
+    # Check for illegal command injection characters
+    import re
+    if re.search(r"[;`$><|]", filter_str):
+        logger.error(f"BPF filter validation error: Illegal character in '{filter_str}'")
+        return False
+
+    allowed_keywords = {
+        "tcp", "udp", "icmp", "ip", "ip6", "arp", "rarp", "ether", "wlan", "vlan",
+        "host", "net", "port", "portrange", "src", "dst", "proto",
+        "and", "or", "not", "gateway", "mask", "less", "greater", "broadcast", "multicast",
+    }
+
+    tokens = re.findall(r"[a-zA-Z0-9.\-/:]+", filter_str)
+    for token in tokens:
+        token_lower = token.lower()
+        if token_lower in allowed_keywords:
+            continue
+        if re.match(r"^\d+$", token):
+            continue
+        if re.match(r"^\d{1,3}(\.\d{1,3}){3}(/\d{1,2})?$", token):
+            continue
+        if re.match(r"^([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})$", token):
+            continue
+        logger.error(f"BPF filter validation error: Invalid BPF token '{token}' in '{filter_str}'")
+        return False
+
+    return True
 
 
 def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
@@ -119,16 +204,27 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     if settings is None:
         return
 
-    interface = settings.get("interface", "")
-    target_ip = settings.get("target_ip", "")
-    bpf_filter = settings.get("bpf_filter", config.get("default_filter", ""))
+    interface = settings.get("interface", "").strip()
+    target_ip = settings.get("target_ip", "").strip()
+    bpf_filter = settings.get("bpf_filter", config.get("default_filter", "")).strip()
 
-    # If target IP specified, add to BPF filter
+    # Validate target IP if specified
     if target_ip:
-        ip_filter = f"host {target_ip}"
-        bpf_filter = f"({bpf_filter}) and {ip_filter}" if bpf_filter else ip_filter
+        import ipaddress
+        try:
+            ipaddress.ip_address(target_ip)
+            ip_filter = f"host {target_ip}"
+            bpf_filter = f"({bpf_filter}) and {ip_filter}" if bpf_filter else ip_filter
+        except ValueError:
+            console.print(f"[bold red]Error:[/bold red] Invalid target IP address '{target_ip}'.")
+            return
 
-    # Initialize components
+    # Validate final BPF filter
+    if bpf_filter and not validate_bpf_filter(bpf_filter):
+        console.print(f"[bold red]Error:[/bold red] Invalid BPF filter syntax '{bpf_filter}'.")
+        return
+
+    # Setup components
     stats = StatsAggregator()
     alert_manager = AlertManager(
         max_alerts=config.get("max_alerts", 100),
@@ -141,12 +237,28 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     sniffer = PacketSniffer()
     dashboard = LiveDashboard(stats, alert_manager, privacy)
 
-    packet_buffer = deque(maxlen=config.get("packet_buffer_size", 500))
-    packet_queue = Queue(maxsize=config.get("packet_queue_size", 5000))
-    raw_packets = []
-    packet_counter = [0]  # Mutable counter for closure
+    packet_buffer_size = config.get("packet_buffer_size", 500)
+    packet_queue_size = config.get("packet_queue_size", 5000)
+    packet_buffer = deque(maxlen=packet_buffer_size)
+    packet_queue = Queue(maxsize=packet_queue_size)
+    packet_counter = [0]
     dropped_packets = [0]
+    pending_alerts: List[AlertInfo] = []
+    degraded_subsystems: dict = {}
     lock = threading.Lock()
+
+    # Create temporary PCAP for streaming packets (no RAM accumulation)
+    temp_pcap_file = tempfile.NamedTemporaryFile(suffix=".pcap", delete=False)
+    temp_pcap_path = temp_pcap_file.name
+    temp_pcap_file.close()
+
+    pcap_writer = None
+    try:
+        import scapy.all as scapy
+        pcap_writer = scapy.PcapWriter(temp_pcap_path, sync=True)
+    except Exception as e:
+        logger.error(f"Failed to initialize PCAP streaming writer: {e}")
+        degraded_subsystems["pcap"] = "write_init_error"
 
     # Create session record
     session = SessionInfo(
@@ -159,14 +271,29 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     session_id = db.create_session(session)
 
     def on_packet(raw_pkt):
-        """Capture callback: keep sniffer thread non-blocking."""
+        """Capture callback: lightweight queue enqueue only."""
         try:
             packet_queue.put_nowait(raw_pkt)
         except Full:
             dropped_packets[0] += 1
 
+    def flush_alert_batch():
+        """Flush accumulated alerts to database."""
+        nonlocal pending_alerts
+        if not pending_alerts:
+            return
+        with lock:
+            batch_to_save = pending_alerts[:]
+            pending_alerts.clear()
+        try:
+            db.save_alerts_batch(batch_to_save)
+            degraded_subsystems.pop("db", None)
+        except Exception as e:
+            logger.error(f"Database batch alert save error: {e}")
+            degraded_subsystems["db"] = "write_error"
+
     def process_pending_packets(max_packets: int = 250):
-        """Drain queued capture packets into stats, detection, and display buffers."""
+        """Drain queued capture packets into stats, detection, PCAP writer, and display buffers."""
         processed = 0
         while processed < max_packets:
             try:
@@ -184,13 +311,23 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
                     for alert in detection_pipeline.evaluate(pkt_info):
                         alert.session_id = session_id
                         if alert_manager.add(alert):
-                            db.save_alert(alert)
+                            pending_alerts.append(alert)
 
                     packet_buffer.append(pkt_info)
-                    raw_packets.append(raw_pkt)
+
+                    # Stream packet to disk via PCAP writer
+                    if pcap_writer:
+                        try:
+                            pcap_writer.write(raw_pkt)
+                        except Exception as e:
+                            logger.error(f"PCAP stream write error: {e}")
+                            degraded_subsystems["pcap"] = "disk_write_error"
 
             packet_queue.task_done()
             processed += 1
+
+        if len(pending_alerts) >= 50:
+            flush_alert_batch()
 
         return processed
 
@@ -199,7 +336,7 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     console.print(f"[bold green]Starting capture[/bold green] on {interface or 'default interface'}...")
     if bpf_filter:
         console.print(f"  Filter: [yellow]{bpf_filter}[/yellow]")
-    console.print("  Press [bold]Ctrl+C[/bold] to stop capture")
+    console.print("  Press [bold]Ctrl+C[/bold] to stop capture | [bold]P[/bold] to pause/resume display")
     console.print()
 
     try:
@@ -210,22 +347,37 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
         )
         stats.start_rate_calculator()
 
-        refresh_interval = 1.0 / config.get("refresh_fps", 4)
+        refresh_fps = config.get("refresh_fps", 4)
+        refresh_interval = 1.0 / refresh_fps
         paused = False
+        recent_latencies: deque = deque(maxlen=10)
 
         with Live(
             dashboard.get_renderable(),
             console=console,
-            refresh_per_second=config.get("refresh_fps", 4),
+            refresh_per_second=refresh_fps,
             transient=True,
         ) as live:
             while sniffer.is_running():
                 try:
+                    t_start = time.perf_counter()
                     if not paused:
                         process_pending_packets()
-                        dashboard.update(list(packet_buffer))
-                        live.update(dashboard.get_renderable())
-                    
+                    t_elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+                    recent_latencies.append(t_elapsed_ms)
+                    avg_lat = sum(recent_latencies) / len(recent_latencies) if recent_latencies else 0.0
+
+                    dashboard.update(
+                        packets_buffer=list(packet_buffer),
+                        dropped_count=dropped_packets[0],
+                        queue_depth=packet_queue.qsize(),
+                        queue_capacity=packet_queue_size,
+                        paused=paused,
+                        degraded_subsystems=degraded_subsystems,
+                        avg_latency_ms=avg_lat,
+                    )
+                    live.update(dashboard.get_renderable())
+
                     # Keyboard handling for Windows
                     if sys.platform == 'win32':
                         import msvcrt
@@ -238,10 +390,12 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
                             elif key == 'f':
                                 live.stop()
                                 try:
-                                    new_filter = Prompt.ask("BPF Filter (blank to clear)", default="")
-                                    bpf_filter = new_filter
-                                    sniffer.restart_with_filter(bpf_filter if bpf_filter else None)
-                                    dashboard.update(list(packet_buffer))
+                                    new_filter = Prompt.ask("BPF Filter (blank to clear)", default="").strip()
+                                    if validate_bpf_filter(new_filter):
+                                        bpf_filter = new_filter
+                                        sniffer.restart_with_filter(bpf_filter if bpf_filter else None)
+                                    else:
+                                        console.print(f"[bold red]Filter change failed:[/bold red] Invalid BPF syntax '{new_filter}'")
                                 except Exception as e:
                                     console.print(f"[bold red]Filter change failed:[/bold red] {e}")
                                 finally:
@@ -250,8 +404,8 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
                                 exporter = Exporter()
                                 export_dir = config.get("export_directory", "exports")
                                 filename = exporter.generate_filename("capture", "json")
-                                filepath = os.path.join(export_dir, filename)
                                 try:
+                                    filepath = exporter.validate_export_path(filename, export_dir)
                                     exporter.export_json(
                                         filepath,
                                         alert_manager.get_all(),
@@ -270,19 +424,55 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     except Exception as e:
         console.print(f"[bold red]Error during capture:[/bold red] {e}")
     finally:
-        process_pending_packets(max_packets=packet_queue.qsize())
+        # DETERMINISTIC SHUTDOWN SEQUENCE:
+        # 1. Stop capture producer
         sniffer.stop()
-        stats.stop_rate_calculator()
 
-    # End session
-    snapshot = stats.get_snapshot()
-    db.end_session(
-        session_id=session_id,
-        packet_count=snapshot.total_packets,
-        total_bytes=snapshot.total_bytes,
-        alert_count=alert_manager.get_count(),
-    )
-    db.save_packet_summary(session_id, snapshot)
+        # 2. Drain queue until Empty
+        drain_start = time.time()
+        while not packet_queue.empty() and (time.time() - drain_start < 5.0):
+            try:
+                raw_pkt = packet_queue.get_nowait()
+                packet_counter[0] += 1
+                pkt_info = process_packet(raw_pkt, packet_counter[0])
+                if pkt_info:
+                    stats.update(pkt_info)
+                    for alert in detection_pipeline.evaluate(pkt_info):
+                        alert.session_id = session_id
+                        if alert_manager.add(alert):
+                            pending_alerts.append(alert)
+                    packet_buffer.append(pkt_info)
+                    if pcap_writer:
+                        try:
+                            pcap_writer.write(raw_pkt)
+                        except Exception:
+                            pass
+                packet_queue.task_done()
+            except Empty:
+                break
+
+        # 3. Flush alert batch
+        flush_alert_batch()
+
+        # 4. Flush & close PCAP writer
+        if pcap_writer:
+            try:
+                pcap_writer.close()
+            except Exception as e:
+                logger.error(f"Error closing PCAP writer: {e}")
+
+        # 5. Save session summary
+        snapshot = stats.get_snapshot()
+        db.end_session(
+            session_id=session_id,
+            packet_count=snapshot.total_packets,
+            total_bytes=snapshot.total_bytes,
+            alert_count=alert_manager.get_count(),
+        )
+        db.save_packet_summary(session_id, snapshot)
+
+        # 6. Stop workers
+        stats.stop_rate_calculator()
 
     console.print()
     console.print(f"[bold green]Capture stopped.[/bold green]")
@@ -296,30 +486,36 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
         export_settings = prompt_export_settings()
         if export_settings:
             exporter = Exporter()
-            exporter.ensure_export_dir(config.get("export_directory", "exports"))
+            export_dir = config.get("export_directory", "exports")
 
             fmt = export_settings.get("format", "csv").lower()
-            filename = export_settings.get(
-                "filename",
-                exporter.generate_filename("capture", fmt),
-            ) or exporter.generate_filename("capture", fmt)
-            filepath = os.path.join(config.get("export_directory", "exports"), filename)
+            default_fn = exporter.generate_filename("capture", fmt)
+            user_fn = export_settings.get("filename", "").strip() or default_fn
 
             try:
+                filepath = exporter.validate_export_path(user_fn, export_dir)
+
                 if fmt == "csv":
                     exporter.export_csv(filepath, list(packet_buffer), snapshot)
                 elif fmt == "pcap":
-                    exporter.export_pcap(filepath, raw_packets)
+                    if os.path.exists(temp_pcap_path) and os.path.getsize(temp_pcap_path) > 0:
+                        shutil.copyfile(temp_pcap_path, filepath)
+                    else:
+                        raise RuntimeError("No raw PCAP data available for export.")
                 elif fmt == "json":
                     exporter.export_json(filepath, alert_manager.get_all(), snapshot)
                 else:
                     raise ValueError(f"Unsupported export format: {fmt}")
+                console.print(f"[green]Exported to:[/green] {filepath}")
             except Exception as e:
-                filepath = ""
                 console.print(f"[bold red]Export failed:[/bold red] {e}")
 
-            if filepath:
-                console.print(f"[green]Exported to:[/green] {filepath}")
+    # 7. Clean up temporary PCAP file
+    if os.path.exists(temp_pcap_path):
+        try:
+            os.remove(temp_pcap_path)
+        except Exception as e:
+            logger.warning(f"Failed to remove temp PCAP file {temp_pcap_path}: {e}")
 
 
 def run_network_scan(config: dict, db: Database):

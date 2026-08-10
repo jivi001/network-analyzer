@@ -5,9 +5,10 @@ from typing import Dict
 class Resolver:
     """DNS Resolution with caching."""
 
-    def __init__(self):
+    def __init__(self, max_cache_size: int = 10000):
         self._cache: Dict[str, str] = {}
         self._cache_lock = threading.Lock()
+        self.max_cache_size = max_cache_size
         socket.setdefaulttimeout(2.0)
 
     def reverse_dns(self, ip: str) -> str:
@@ -35,6 +36,11 @@ class Resolver:
         hostname = self.reverse_dns(ip)
         
         with self._cache_lock:
+            if len(self._cache) >= self.max_cache_size:
+                # Simple eviction of oldest quarter
+                keys = list(self._cache.keys())
+                for k in keys[: len(keys) // 4]:
+                    del self._cache[k]
             self._cache[ip] = hostname
             
         return hostname

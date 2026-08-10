@@ -1,11 +1,14 @@
 """
 Rule Engine for my-sentinel.
 """
+import logging
 import os
 import yaml
 from typing import List
 from detection.anomaly import shannon_entropy
 from storage.models import PacketInfo, AlertInfo, DetectionRule
+
+logger = logging.getLogger(__name__)
 
 
 class RuleEngine:
@@ -30,20 +33,23 @@ class RuleEngine:
                         with open(path, "r", encoding="utf-8") as f:
                             data = yaml.safe_load(f)
                             if not isinstance(data, dict):
+                                logger.warning(f"Rule file {path} did not contain a valid dictionary")
                                 continue
 
                             rule = DetectionRule(
-                                name=data.get("name", "Unknown"),
-                                description=data.get("description", ""),
-                                severity=data.get("severity", "INFO"),
-                                enabled=data.get("enabled", True),
-                                match=data.get("match", {}),
-                                action=data.get("action", {}),
+                                name=str(data.get("name", "Unknown")),
+                                description=str(data.get("description", "")),
+                                severity=str(data.get("severity", "INFO")),
+                                enabled=bool(data.get("enabled", True)),
+                                match=data.get("match", {}) if isinstance(data.get("match"), dict) else {},
+                                action=data.get("action", {}) if isinstance(data.get("action"), dict) else {},
                             )
                             if self._is_valid_rule(rule):
                                 self.rules.append(rule)
-                    except Exception:
-                        pass  # Handle invalid YAML gracefully
+                            else:
+                                logger.warning(f"Invalid rule structure in {path}")
+                    except Exception as e:
+                        logger.warning(f"Error loading rule file {path}: {e}")
         return self.rules
 
     def evaluate(self, packet: PacketInfo) -> List[AlertInfo]:
@@ -52,38 +58,41 @@ class RuleEngine:
         for rule in self.rules:
             if not rule.enabled:
                 continue
-            if self._match_rule(packet, rule):
-                action = rule.action
-                if action.get("alert", True):
-                    msg_template = action.get("message", "Rule matched: {name}")
+            try:
+                if self._match_rule(packet, rule):
+                    action = rule.action
+                    if action.get("alert", True):
+                        msg_template = action.get("message", "Rule matched: {name}")
 
-                    try:
-                        msg = msg_template.format(
-                            name=rule.name,
+                        try:
+                            msg = msg_template.format(
+                                name=rule.name,
+                                src_ip=packet.src_ip,
+                                dst_ip=packet.dst_ip,
+                                dst_port=packet.dst_port,
+                                service=packet.service,
+                                dns_query=getattr(packet, "dns_query", ""),
+                                entropy=getattr(packet, "entropy", 0.0),
+                                old_mac=getattr(packet, "old_mac", ""),
+                                new_mac=getattr(packet, "new_mac", ""),
+                            )
+                        except Exception:
+                            msg = f"Rule matched: {rule.name} ({packet.src_ip} -> {packet.dst_ip})"
+
+                        alert = AlertInfo(
+                            rule_name=rule.name,
+                            severity=rule.severity,
+                            message=msg,
                             src_ip=packet.src_ip,
                             dst_ip=packet.dst_ip,
                             dst_port=packet.dst_port,
-                            service=packet.service,
-                            dns_query=getattr(packet, "dns_query", ""),
-                            entropy=getattr(packet, "entropy", 0.0),
-                            old_mac=getattr(packet, "old_mac", ""),
-                            new_mac=getattr(packet, "new_mac", ""),
+                            protocol=packet.protocol,
+                            timestamp=packet.timestamp,
+                            timestamp_str=packet.timestamp_str,
                         )
-                    except Exception:
-                        msg = f"Rule matched: {rule.name} ({packet.src_ip} -> {packet.dst_ip})"
-
-                    alert = AlertInfo(
-                        rule_name=rule.name,
-                        severity=rule.severity,
-                        message=msg,
-                        src_ip=packet.src_ip,
-                        dst_ip=packet.dst_ip,
-                        dst_port=packet.dst_port,
-                        protocol=packet.protocol,
-                        timestamp=packet.timestamp,
-                        timestamp_str=packet.timestamp_str,
-                    )
-                    alerts.append(alert)
+                        alerts.append(alert)
+            except Exception as e:
+                logger.error(f"Error evaluating rule '{rule.name}': {e}")
         return alerts
 
     def _is_valid_rule(self, rule: DetectionRule) -> bool:
@@ -101,7 +110,7 @@ class RuleEngine:
 
         # Match protocol
         rule_proto = match.get("protocol")
-        if rule_proto and packet.protocol.upper() != rule_proto.upper():
+        if rule_proto and packet.protocol.upper() != str(rule_proto).upper():
             return False
 
         # Match port
@@ -110,17 +119,18 @@ class RuleEngine:
             if isinstance(rule_ports, list):
                 if packet.dst_port not in rule_ports:
                     return False
-            elif isinstance(rule_ports, int):
-                if packet.dst_port != rule_ports:
+            elif isinstance(rule_ports, (int, float)):
+                if packet.dst_port != int(rule_ports):
                     return False
 
         # Match TCP flags
         rule_flags = match.get("flags")
         if rule_flags and packet.protocol == "TCP":
             packet_flags = packet.flags or []
-            for flag in rule_flags:
-                if flag not in packet_flags and flag not in packet.flags_raw:
-                    return False
+            if isinstance(rule_flags, list):
+                for flag in rule_flags:
+                    if flag not in packet_flags and flag not in packet.flags_raw:
+                        return False
 
         # Condition types
         condition = match.get("condition")
@@ -132,15 +142,22 @@ class RuleEngine:
             if packet.dst_port not in CLEARTEXT_PORTS:
                 return False
         elif condition == "high_port":
-            threshold = match.get("threshold", 1024)
+            try:
+                threshold = int(match.get("threshold", 1024))
+            except (ValueError, TypeError):
+                threshold = 1024
             if packet.dst_port is None or packet.dst_port <= threshold:
                 return False
         elif condition == "high_entropy_subdomain":
             if packet.protocol != "DNS" or not packet.dns_query:
                 return False
             subdomain = packet.dns_query.split(".")[0] if "." in packet.dns_query else packet.dns_query
-            min_length = int(match.get("min_subdomain_length", 20))
-            threshold = float(match.get("entropy_threshold", 3.5))
+            try:
+                min_length = int(match.get("min_subdomain_length", 20))
+                threshold = float(match.get("entropy_threshold", 3.5))
+            except (ValueError, TypeError):
+                min_length = 20
+                threshold = 3.5
             if len(subdomain) <= min_length:
                 return False
             entropy = shannon_entropy(subdomain)

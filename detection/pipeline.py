@@ -1,12 +1,12 @@
-"""
-Shared packet detection pipeline.
-"""
+import logging
 from typing import List
 
 from detection.anomaly import AnomalyDetector
 from detection.arp_monitor import ArpMonitor
 from detection.rule_engine import RuleEngine
 from storage.models import AlertInfo, PacketInfo
+
+logger = logging.getLogger(__name__)
 
 
 class PacketDetectionPipeline:
@@ -23,19 +23,33 @@ class PacketDetectionPipeline:
         self.arp_monitor = arp_monitor
 
     def evaluate(self, packet: PacketInfo) -> List[AlertInfo]:
-        alerts = list(self.rule_engine.evaluate(packet))
+        alerts: List[AlertInfo] = []
 
-        dns_alert = self.anomaly_detector.check_dns_exfiltration(packet)
-        if dns_alert:
-            alerts.append(dns_alert)
+        try:
+            alerts.extend(self.rule_engine.evaluate(packet))
+        except Exception as e:
+            logger.error(f"RuleEngine error evaluating packet: {e}")
 
-        scan_alert = self.anomaly_detector.check_port_scan(packet)
-        if scan_alert:
-            alerts.append(scan_alert)
+        try:
+            dns_alert = self.anomaly_detector.check_dns_exfiltration(packet)
+            if dns_alert:
+                alerts.append(dns_alert)
+        except Exception as e:
+            logger.error(f"DNS exfiltration check error: {e}")
+
+        try:
+            scan_alert = self.anomaly_detector.check_port_scan(packet)
+            if scan_alert:
+                alerts.append(scan_alert)
+        except Exception as e:
+            logger.error(f"Port scan check error: {e}")
 
         if packet.protocol == "ARP":
-            arp_alert = self.arp_monitor.check(packet)
-            if arp_alert:
-                alerts.append(arp_alert)
+            try:
+                arp_alert = self.arp_monitor.check(packet)
+                if arp_alert:
+                    alerts.append(arp_alert)
+            except Exception as e:
+                logger.error(f"ARP monitor check error: {e}")
 
         return alerts

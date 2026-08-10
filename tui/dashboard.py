@@ -56,11 +56,21 @@ class LiveDashboard:
     def build_layout(self) -> Layout:
         return self.layout
 
-    def update(self, packets_buffer: List[PacketInfo]):
+    def update(
+        self,
+        packets_buffer: List[PacketInfo],
+        dropped_count: int = 0,
+        queue_depth: int = 0,
+        queue_capacity: int = 5000,
+        paused: bool = False,
+        degraded_subsystems: Optional[dict] = None,
+        avg_latency_ms: float = 0.0,
+    ):
         self.packets_buffer = packets_buffer[-20:]  # Keep last 20 for table display
 
         # Header
         elapsed = format_elapsed(time.time() - self.start_time)
+        pause_badge = " [bold yellow]⏸ PAUSED (CAPTURE CONTINUES)[/bold yellow]" if paused else ""
         header_text = Text.assemble(
             ("my-sentinel v", "bold cyan"),
             (APP_VERSION, "bold cyan"),
@@ -69,6 +79,9 @@ class LiveDashboard:
             " | Elapsed: ",
             (elapsed, "bold green"),
         )
+        if paused:
+            header_text.append(" | ⏸ PAUSED — CAPTURE CONTINUES", style="bold yellow")
+
         self.layout["header"].update(Panel(header_text, style="white on blue"))
 
         # Left Panel (Packet Stream)
@@ -88,8 +101,11 @@ class LiveDashboard:
             row = format_packet_row(pkt, self.privacy_filter)
             pkt_table.add_row(*row)
 
+        stream_title = "Packet Stream (Live)"
+        if paused:
+            stream_title = "Packet Stream (PAUSED — Capture Running)"
         self.layout["left"].update(
-            Panel(pkt_table, title="Packet Stream (Live)")
+            Panel(pkt_table, title=stream_title)
         )
 
         # Right Top Panel (Protocol Distribution)
@@ -157,16 +173,36 @@ class LiveDashboard:
                 truncate(alert.message, 80),
             )
 
+        alerts_title = "Threat Alerts Feed"
+        if degraded_subsystems:
+            degraded_str = ", ".join(f"{k}:{v}" for k, v in degraded_subsystems.items())
+            alerts_title += f" [DEGRADED: {degraded_str}]"
+
         self.layout["alerts"].update(
-            Panel(alerts_table, title="Threat Alerts Feed", border_style="red")
+            Panel(alerts_table, title=alerts_title, border_style="red")
         )
+
+        # Calculate Queue Utilization and Health
+        queue_util = (queue_depth / queue_capacity * 100) if queue_capacity > 0 else 0
+        total_captured = stats.total_packets + dropped_count
+        drop_rate = (dropped_count / total_captured * 100) if total_captured > 0 else 0
+
+        if drop_rate > 10 or queue_util > 90:
+            health_str = "[bold red]CRITICAL[/bold red]"
+        elif drop_rate > 1 or queue_util > 70 or degraded_subsystems:
+            health_str = "[bold yellow]DEGRADED[/bold yellow]"
+        else:
+            health_str = "[bold green]HEALTHY[/bold green]"
 
         # Footer Bar
         footer_text = (
-            f"Packets: [bold]{stats.total_packets:,}[/bold] | "
+            f"Pkts: [bold]{stats.total_packets:,}[/bold] | "
+            f"Dropped: [bold {'red' if dropped_count > 0 else 'white'}]{dropped_count:,}[/bold] | "
+            f"Queue: [bold]{queue_depth}/{queue_capacity}[/bold] ({queue_util:.0f}%) | "
+            f"Health: {health_str} | "
             f"Rate: [bold]{stats.packets_per_sec:.1f} pps[/bold] | "
             f"Bytes: [bold]{format_bytes(stats.total_bytes)}[/bold] | "
-            f"Unique Hosts: [bold]{stats.unique_hosts_total}[/bold]"
+            f"Lat: [bold]{avg_latency_ms:.1f}ms[/bold]"
         )
         self.layout["footer"].update(
             Panel(Text.from_markup(footer_text), style="black on green")

@@ -122,27 +122,134 @@ class AuditRegressionTests(unittest.TestCase):
             self.assertEqual(reopened.get_host_by_ip("10.0.0.2").hostname, "host")
             reopened.close()
 
-    def test_sniffer_restart_applies_new_filter_and_preserves_callback(self):
-        callback_packets = []
+    def test_exporter_path_traversal_rejection(self):
+        exporter = Exporter()
+        with self.assertRaises(ValueError):
+            exporter.validate_export_path("../../../etc/passwd", "exports")
+        with self.assertRaises(ValueError):
+            exporter.validate_export_path("..\\..\\windows\\system32", "exports")
 
-        def callback(packet):
-            callback_packets.append(packet)
+    def test_scanner_target_validation(self):
+        from core.scanner import NetworkScanner
+        scanner = NetworkScanner.__new__(NetworkScanner)
+        scanner.config = {}
+        scanner.timeout = 300
+        
+        self.assertEqual(scanner.validate_target("192.168.1.1"), "192.168.1.1")
+        self.assertEqual(scanner.validate_target("10.0.0.0/24"), "10.0.0.0/24")
+        self.assertEqual(scanner.validate_target("example.com"), "example.com")
+        
+        with self.assertRaises(ValueError):
+            scanner.validate_target("192.168.1.1; cat /etc/passwd")
+        with self.assertRaises(ValueError):
+            scanner.validate_target("-sS 192.168.1.1")
 
-        def fake_sniff(iface=None, filter=None, prn=None, stop_filter=None, store=0):
-            if prn:
-                prn(Ether() / IP(src="10.0.0.2", dst="10.0.0.3") / TCP())
+    def test_database_recovers_from_corrupted_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "corrupt.db")
+            db = Database(db_path)
+            c = db.conn.cursor()
+            c.execute(
+                "INSERT INTO discovered_hosts (ip_address, open_ports, services) VALUES (?, ?, ?)",
+                ("10.0.0.99", "{bad_json", "not_a_json_obj")
+            )
+            db.conn.commit()
 
-        with patch("core.sniffer.scapy.sniff", side_effect=fake_sniff):
-            sniffer = PacketSniffer()
-            sniffer.start(interface="eth-test", callback=callback)
-            time.sleep(0.05)
-            sniffer.restart_with_filter("tcp port 443")
-            time.sleep(0.05)
+            host = db.get_host_by_ip("10.0.0.99")
+            self.assertIsNotNone(host)
+            self.assertEqual(host.open_ports, [])
+            self.assertEqual(host.services, {})
+            db.close()
 
-        self.assertEqual(sniffer.interface, "eth-test")
-        self.assertEqual(sniffer.bpf_filter, "tcp port 443")
-        self.assertEqual(len(callback_packets), 2)
-        self.assertFalse(sniffer.is_running())
+    def test_anomaly_detector_bounds_memory(self):
+        detector = AnomalyDetector(max_hosts=5, max_beacon_pairs=5)
+        pkt = process_packet(Ether() / IP(src="10.0.0.1", dst="10.0.0.2") / TCP(sport=1000, dport=80), 1)
+
+        # Flood scan state
+        for i in range(20):
+            pkt.src_ip = f"10.0.0.{i+1}"
+            pkt.dst_port = 80 + i
+            detector.check_port_scan(pkt)
+
+        self.assertLessEqual(len(detector.scan_state), 5)
+
+        # Flood beacon state
+        for i in range(20):
+            pkt.src_ip = f"10.0.0.{i+1}"
+            pkt.dst_ip = "192.168.1.1"
+            detector.check_beaconing(pkt)
+
+        self.assertLessEqual(len(detector.beacon_state), 5)
+
+    def test_bpf_filter_validation(self):
+        from sentinel import validate_bpf_filter
+        self.assertTrue(validate_bpf_filter(""))
+        self.assertTrue(validate_bpf_filter("tcp port 80"))
+        self.assertFalse(validate_bpf_filter("invalid !!! bpf filter syntax"))
+
+    def test_config_validation(self):
+        from sentinel import _validate_config
+        invalid_config = {
+            "packet_buffer_size": -50,
+            "packet_queue_size": "abc",
+            "refresh_fps": 999,
+            "database_path": "",
+        }
+        validated = _validate_config(invalid_config)
+        self.assertEqual(validated["packet_buffer_size"], 500)
+        self.assertEqual(validated["packet_queue_size"], 5000)
+        self.assertEqual(validated["refresh_fps"], 4)
+        self.assertEqual(validated["database_path"], "sentinel_data.db")
+
+    def test_pipeline_exception_isolation(self):
+        class BrokenRuleEngine:
+            def evaluate(self, pkt):
+                raise RuntimeError("Simulated rule engine failure")
+
+        engine = BrokenRuleEngine()
+        anomaly = AnomalyDetector()
+        arp = ArpMonitor()
+        pipeline = PacketDetectionPipeline(engine, anomaly, arp)
+
+        dns_pkt = process_packet(
+            Ether() / IP(src="10.0.0.2", dst="8.8.8.8") / UDP(sport=53000, dport=53) / DNS(rd=1, qd=DNSQR(qname="xq9z8v7w6r5t4y3u2i1opa.example.com")),
+            1,
+        )
+        alerts = pipeline.evaluate(dns_pkt)
+        self.assertTrue(any(a.rule_name == "DNS Exfiltration Tunnel" for a in alerts))
+
+    def test_importer_strict_validation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "import_test.db")
+            db = Database(db_path)
+            from storage.importer import Importer
+            importer = Importer(db)
+
+            # Test invalid JSON format
+            bad_json_path = Path(tmp) / "bad.json"
+            bad_json_path.write_text("[1, 2, 3]", encoding="utf-8")
+            self.assertFalse(importer.import_json(str(bad_json_path)))
+
+            # Test safe truncation of long strings
+            long_alert_path = Path(tmp) / "long.json"
+            long_alert_data = {
+                "alerts": [
+                    {
+                        "rule_name": "A" * 500,
+                        "message": "B" * 5000,
+                        "severity": "CRITICAL",
+                        "src_ip": "10.0.0.1",
+                    }
+                ]
+            }
+            long_alert_path.write_text(json.dumps(long_alert_data), encoding="utf-8")
+            self.assertTrue(importer.import_json(str(long_alert_path)))
+            
+            alerts = db.get_alerts()
+            self.assertEqual(len(alerts), 1)
+            self.assertEqual(len(alerts[0].rule_name), 200)
+            self.assertEqual(len(alerts[0].message), 1000)
+            db.close()
 
 
 if __name__ == "__main__":

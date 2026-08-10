@@ -19,6 +19,31 @@ class Exporter:
     def __init__(self):
         pass
 
+    def validate_export_path(self, filepath: str, export_dir: str = "exports") -> str:
+        """Sanitize and validate output file paths against path traversal."""
+        if not filepath or not isinstance(filepath, str):
+            raise ValueError(f"Invalid export filename: '{filepath}'")
+
+        # Reject path traversal tokens or absolute path attempts
+        if ".." in filepath or os.path.isabs(filepath) or filepath.startswith(("/", "\\")):
+            raise ValueError(f"Path traversal detected in export path: '{filepath}'")
+
+        filename = os.path.basename(filepath)
+        if not filename or filename in (".", ".."):
+            raise ValueError(f"Invalid export filename: '{filepath}'")
+        
+        # Ensure export_dir exists
+        self.ensure_export_dir(export_dir)
+
+        # Normalize and verify the resolved path remains inside export_dir
+        base_abs = os.path.abspath(export_dir)
+        target_abs = os.path.abspath(os.path.join(export_dir, filename))
+
+        if not target_abs.startswith(base_abs):
+            raise ValueError(f"Path traversal detected in export path: '{filepath}'")
+
+        return target_abs
+
     def ensure_export_dir(self, directory: str = "exports"):
         """Create directory if needed."""
         os.makedirs(directory, exist_ok=True)

@@ -42,6 +42,22 @@ class AlertManager:
                 if current_ts - last_ts < self.dedup_window:
                     return False
 
+            # Prune fingerprints if dict grows large
+            if len(self.recent_fingerprints) > 10000:
+                expired = [
+                    fp for fp, ts in self.recent_fingerprints.items()
+                    if current_ts - ts >= self.dedup_window
+                ]
+                for fp in expired:
+                    del self.recent_fingerprints[fp]
+                if len(self.recent_fingerprints) > 10000:
+                    sorted_fps = sorted(
+                        self.recent_fingerprints.keys(),
+                        key=lambda k: self.recent_fingerprints[k]
+                    )
+                    for fp in sorted_fps[: len(self.recent_fingerprints) - 10000]:
+                        del self.recent_fingerprints[fp]
+
             # Add alert
             self.recent_fingerprints[fingerprint] = current_ts
             self.alert_counter += 1

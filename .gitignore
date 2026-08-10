@@ -12,3 +12,18 @@ venv/
 *.pcap
 *.pcapng
 logs/
+
+# Graphify knowledge graph
+graphify-out/
+
+# Test databases & test execution artifacts
+*.db
+*.db-shm
+*.db-wal
+test_*.db
+test_*.json
+export_test.json
+.pytest_cache/
+.coverage
+htmlcov/
+
