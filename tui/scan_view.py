@@ -8,11 +8,12 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.text import Text
 
 from storage.models import ScanResult, HostInfo
-from utils.console import console
+from utils.console import console, ScreenState, screen_manager
 
 
 def display_scan_progress(target: str, scan_type: str, scan_args: str = ""):
-    """Show rich panel during scan execution."""
+    """Show rich panel during scan execution in TASK_RUNNING state."""
+    screen_manager.set_state(ScreenState.TASK_RUNNING)
     from utils.constants import SCAN_TYPES
     profile_info = SCAN_TYPES.get(scan_type, {})
     profile_name = profile_info.get("name", scan_type)
@@ -34,8 +35,8 @@ def display_scan_progress(target: str, scan_type: str, scan_args: str = ""):
 
 
 def display_scan_results(result: ScanResult):
-    """Render scan results as Rich tables."""
-    console.clear()
+    """Render scan results as Rich tables in TASK_COMPLETE state."""
+    screen_manager.set_state(ScreenState.TASK_COMPLETE)
     from utils.constants import SCAN_TYPES
     profile_name = SCAN_TYPES.get(result.scan_type, {}).get("name", result.scan_type)
 

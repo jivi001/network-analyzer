@@ -33,9 +33,15 @@ if sys.platform == 'win32':
 from rich.live import Live
 from rich.prompt import Prompt, Confirm
 
-# my-sentinel modules
 from utils.constants import APP_BANNER, APP_VERSION, APP_NAME, DASHBOARD_REFRESH_MS
-from utils.console import console
+from utils.console import (
+    console,
+    enter_alt_screen,
+    exit_alt_screen,
+    clear_screen,
+    ScreenState,
+    screen_manager,
+)
 from utils.privileges import check_privileges, check_nmap_installed, check_npcap_installed
 from utils.privacy import PrivacyFilter
 
@@ -746,7 +752,7 @@ def run_settings(config: dict, privacy: PrivacyFilter):
     """
     Mode 5: Settings — View and modify configuration.
     """
-    clear_screen()
+    screen_manager.set_state(ScreenState.TASK_CONFIG)
     console.print("[bold cyan]Current Settings[/bold cyan]")
     console.print()
 
@@ -832,7 +838,7 @@ Examples:
 
 
 def main():
-    """Main entry point for my-sentinel."""
+    """Main entry point for my-sentinel with state-driven terminal lifecycle."""
     args = parse_args()
 
     # Load configuration
@@ -852,14 +858,19 @@ def main():
     # Initialize database
     db = Database(db_path=config["database_path"])
 
+    # 1. Switch to terminal's alternate screen buffer on startup
+    enter_alt_screen()
+
     try:
         # Direct mode from CLI args
         if args.capture:
+            screen_manager.set_state(ScreenState.TASK_RUNNING)
             console.print(APP_BANNER)
             run_live_capture(config, db, privacy)
             return
 
         if args.scan:
+            screen_manager.set_state(ScreenState.TASK_RUNNING)
             console.print(APP_BANNER)
             if not check_nmap_installed():
                 return
@@ -883,6 +894,7 @@ def main():
             return
 
         if args.pcap:
+            screen_manager.set_state(ScreenState.TASK_RUNNING)
             console.print(APP_BANNER)
             # Override prompt with CLI arg
             config["_pcap_path"] = args.pcap
@@ -904,6 +916,7 @@ def main():
             elif choice == "5":
                 run_settings(config, privacy)
             elif choice == "6":
+                screen_manager.set_state(ScreenState.EXIT)
                 console.print()
                 console.print("[bold cyan]Goodbye![/bold cyan]")
                 break
@@ -911,10 +924,13 @@ def main():
                 console.print("[yellow]Invalid option. Please select 1-6.[/yellow]")
 
     except KeyboardInterrupt:
+        screen_manager.set_state(ScreenState.EXIT)
         console.print()
         console.print("[bold cyan]Interrupted. Goodbye![/bold cyan]")
     finally:
         db.close()
+        # Guarantee restoration of standard screen buffer and cursor visibility
+        exit_alt_screen()
 
 
 if __name__ == "__main__":

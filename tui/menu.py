@@ -8,17 +8,12 @@ from rich.prompt import Prompt
 from rich.text import Text
 
 from utils.constants import APP_VERSION
-from utils.console import console
-
-
-def clear_screen():
-    """Clear screen cleanly."""
-    console.clear()
+from utils.console import console, clear_screen, ScreenState, screen_manager
 
 
 def show_main_menu() -> str:
-    """Display the main menu and return user's choice."""
-    clear_screen()
+    """Display the main menu cleanly in the isolated MAIN_MENU state."""
+    screen_manager.set_state(ScreenState.MAIN_MENU)
 
     menu_text = Text()
     menu_text.append("\n")
@@ -50,8 +45,8 @@ def show_main_menu() -> str:
 
 
 def prompt_capture_settings() -> Dict[str, str]:
-    """Ask for interface, target IP filter, BPF filter."""
-    clear_screen()
+    """Ask for interface, target IP filter, BPF filter in TASK_CONFIG state."""
+    screen_manager.set_state(ScreenState.TASK_CONFIG)
     console.print("[bold cyan]Live Capture Settings[/bold cyan]")
     interface = Prompt.ask("Interface (leave blank for default)", default="")
     target_ip = Prompt.ask("Target IP Filter (optional)", default="")
@@ -65,8 +60,8 @@ def prompt_capture_settings() -> Dict[str, str]:
 
 
 def prompt_scan_settings() -> Optional[Dict[str, str]]:
-    """Ask for target IP/subnet and scan profile from the enhanced list."""
-    clear_screen()
+    """Ask for target IP/subnet and scan profile in TASK_CONFIG state."""
+    screen_manager.set_state(ScreenState.TASK_CONFIG)
     console.print("[bold cyan]Network Scan Settings[/bold cyan]")
     console.print("[dim]Scan only systems and networks you own or are explicitly authorized to assess.[/dim]")
     console.print()
@@ -129,8 +124,8 @@ def prompt_scan_settings() -> Optional[Dict[str, str]]:
 
 
 def prompt_pcap_path() -> str:
-    """Ask for PCAP file path with validation."""
-    clear_screen()
+    """Ask for PCAP file path with validation in TASK_CONFIG state."""
+    screen_manager.set_state(ScreenState.TASK_CONFIG)
     console.print("[bold cyan]Analyze PCAP File[/bold cyan]")
     while True:
         filepath = Prompt.ask("Path to PCAP file")

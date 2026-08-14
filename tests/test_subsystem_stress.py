@@ -242,6 +242,37 @@ class ComprehensiveSubsystemTests(unittest.TestCase):
                 self.assertEqual(host.hostname, "localhost")
                 self.assertEqual(host.os_guess, "Linux 5.x")
 
+    def test_terminal_lifecycle_and_screen_state_transitions(self):
+        from utils.console import (
+            ScreenState,
+            screen_manager,
+            clear_screen,
+            enter_alt_screen,
+            exit_alt_screen,
+        )
+
+        screen_manager.set_state(ScreenState.MAIN_MENU)
+        self.assertEqual(screen_manager.current_state, ScreenState.MAIN_MENU)
+
+        screen_manager.set_state(ScreenState.TASK_CONFIG)
+        self.assertEqual(screen_manager.current_state, ScreenState.TASK_CONFIG)
+
+        screen_manager.set_state(ScreenState.TASK_RUNNING)
+        self.assertEqual(screen_manager.current_state, ScreenState.TASK_RUNNING)
+
+        screen_manager.set_state(ScreenState.TASK_COMPLETE)
+        self.assertEqual(screen_manager.current_state, ScreenState.TASK_COMPLETE)
+
+        screen_manager.set_state(ScreenState.EXIT)
+        self.assertEqual(screen_manager.current_state, ScreenState.EXIT)
+
+        # Test buffer call idempotency and clear_screen execution
+        clear_screen()
+        enter_alt_screen()
+        enter_alt_screen()
+        exit_alt_screen()
+        exit_alt_screen()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,13 +10,12 @@ from rich.text import Text
 from storage.models import AlertInfo, HostInfo, SessionInfo
 from tui.helpers import format_alert_row, format_host_row
 from utils.constants import format_bytes
-from utils.console import console
-from tui.menu import clear_screen
+from utils.console import console, clear_screen, ScreenState, screen_manager
 
 
 def display_history_menu() -> str:
     """Sub-menu for history mode."""
-    clear_screen()
+    screen_manager.set_state(ScreenState.MAIN_MENU)
 
     menu_text = Text()
     menu_text.append("\n")
@@ -48,8 +47,8 @@ def display_history_menu() -> str:
 
 
 def display_sessions(sessions: List[SessionInfo]):
-    """Rich table of sessions."""
-    clear_screen()
+    """Rich table of sessions in TASK_COMPLETE state."""
+    screen_manager.set_state(ScreenState.TASK_COMPLETE)
     if not sessions:
         console.print(Panel("[yellow]No capture history available[/yellow]", title="Recent Sessions", box=box.ASCII))
         return

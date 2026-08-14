@@ -9,20 +9,21 @@ from rich.text import Text
 
 from storage.models import PacketInfo, StatsSnapshot, AlertInfo
 from utils.constants import format_bytes
-from utils.console import console
+from utils.console import console, ScreenState, screen_manager
 from tui.helpers import protocol_badge, severity_badge, build_bar, format_elapsed
 
 
 def display_pcap_loading(filepath: str):
-    """Show progress while loading."""
+    """Show progress while loading in TASK_RUNNING state."""
+    screen_manager.set_state(ScreenState.TASK_RUNNING)
     console.print(f"[cyan]Loading and parsing PCAP file '{filepath}'...[/cyan]")
 
 
 def display_pcap_analysis(
     packets: List[PacketInfo], stats: StatsSnapshot, alerts: List[AlertInfo]
 ):
-    """Render full PCAP analysis results."""
-    console.clear()
+    """Render full PCAP analysis results in TASK_COMPLETE state."""
+    screen_manager.set_state(ScreenState.TASK_COMPLETE)
 
     # Summary panel
     summary_text = (
