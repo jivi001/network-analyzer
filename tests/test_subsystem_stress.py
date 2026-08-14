@@ -273,6 +273,47 @@ class ComprehensiveSubsystemTests(unittest.TestCase):
         exit_alt_screen()
         exit_alt_screen()
 
+    def test_decoupled_packet_queue_burst_and_drop_metrics(self):
+        import queue
+        from core.processor import process_packet
+        from core.stats import StatsAggregator
+        from scapy.all import Ether, IP, TCP
+
+        queue_cap = 500
+        packet_queue = queue.Queue(maxsize=queue_cap)
+        captured = [0]
+        enqueued = [0]
+        processed = [0]
+        dropped = [0]
+        stats = StatsAggregator()
+
+        # Generate 600 packets to verify bounded queue drops exactly 100 packets
+        for i in range(600):
+            pkt = Ether(src="00:11:22:33:44:55", dst="66:77:88:99:aa:bb") / IP(src="192.168.1.10", dst="8.8.8.8") / TCP(sport=50000+i, dport=80)
+            captured[0] += 1
+            try:
+                packet_queue.put_nowait(pkt)
+                enqueued[0] += 1
+            except queue.Full:
+                dropped[0] += 1
+
+        self.assertEqual(captured[0], 600)
+        self.assertEqual(enqueued[0], 500)
+        self.assertEqual(dropped[0], 100)
+        self.assertEqual(packet_queue.qsize(), 500)
+
+        # Drain queue via worker simulation
+        while not packet_queue.empty():
+            pkt = packet_queue.get_nowait()
+            processed[0] += 1
+            info = process_packet(pkt, processed[0])
+            if info:
+                stats.update(info)
+            packet_queue.task_done()
+
+        self.assertEqual(processed[0], 500)
+        self.assertEqual(stats.get_snapshot().total_packets, 500)
+
 
 if __name__ == "__main__":
     unittest.main()

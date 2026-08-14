@@ -12,8 +12,10 @@ capture:
   interface: ""
   # Maximum packets to buffer in memory for TUI display
   packet_buffer_size: 500
-  # Dashboard refresh rate in frames per second
-  refresh_fps: 24
+  # Dashboard refresh rate in frames per second (smooth 10 FPS)
+  refresh_fps: 10
+  # Bounded packet queue capacity for absorbing high-throughput bursts (e.g. video streaming)
+  packet_queue_size: 10000
   # Default BPF filter (blank = capture all)
   default_filter: ""
   # Enable privacy masking by default

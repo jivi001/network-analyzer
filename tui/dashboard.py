@@ -57,12 +57,18 @@ class LiveDashboard:
     def update(
         self,
         packets_buffer: List[PacketInfo],
+        captured_count: int = 0,
+        enqueued_count: int = 0,
+        processed_count: int = 0,
         dropped_count: int = 0,
         queue_depth: int = 0,
-        queue_capacity: int = 5000,
+        queue_capacity: int = 10000,
         paused: bool = False,
         degraded_subsystems: Optional[dict] = None,
         avg_latency_ms: float = 0.0,
+        processing_errors: int = 0,
+        pcap_errors: int = 0,
+        db_errors: int = 0,
     ):
         self.packets_buffer = packets_buffer[-20:]  # Keep last 20 for table display
 
@@ -196,24 +202,25 @@ class LiveDashboard:
                 Panel(Align.center(Text("No security alerts detected", style="dim green")), title=alerts_title, border_style="green")
             )
 
-        # Calculate Queue Utilization and Health
+        # Calculate Queue Utilization and System Health
         queue_util = (queue_depth / queue_capacity * 100) if queue_capacity > 0 else 0
-        total_captured = stats.total_packets + dropped_count
-        drop_rate = (dropped_count / total_captured * 100) if total_captured > 0 else 0
+        total_lost = dropped_count + processing_errors
+        total_received = captured_count if captured_count > 0 else (stats.total_packets + total_lost)
+        drop_rate = (total_lost / total_received * 100) if total_received > 0 else 0
 
         if drop_rate > 10 or queue_util > 90:
             health_str = "[bold red]CRITICAL[/bold red]"
-        elif drop_rate > 1 or queue_util > 70 or degraded_subsystems:
+        elif drop_rate > 1 or queue_util > 70 or degraded_subsystems or pcap_errors > 0 or db_errors > 0:
             health_str = "[bold yellow]DEGRADED[/bold yellow]"
         else:
             health_str = "[bold green]HEALTHY[/bold green]"
 
-        # Footer Bar
+        # Footer Bar with honest metrics breakdown
         drop_style = "bold red" if dropped_count > 0 else "bold white"
         footer_text = (
             f"Pkts: [bold]{stats.total_packets:,}[/bold] | "
             f"Dropped: [{drop_style}]{dropped_count:,}[/{drop_style}] | "
-            f"Queue: [bold]{queue_depth}/{queue_capacity}[/bold] ({queue_util:.0f}%) | "
+            f"Queue: [bold]{queue_depth:,}/{queue_capacity:,}[/bold] ({queue_util:.1f}%) | "
             f"Health: {health_str} | "
             f"Rate: [bold]{stats.packets_per_sec:.1f} pps[/bold] | "
             f"Bytes: [bold]{format_bytes(stats.total_bytes)}[/bold] | "

@@ -197,8 +197,8 @@ class AuditRegressionTests(unittest.TestCase):
         }
         validated = _validate_config(invalid_config)
         self.assertEqual(validated["packet_buffer_size"], 500)
-        self.assertEqual(validated["packet_queue_size"], 5000)
-        self.assertEqual(validated["refresh_fps"], 4)
+        self.assertEqual(validated["packet_queue_size"], 10000)
+        self.assertEqual(validated["refresh_fps"], 10)
         self.assertTrue(validated["database_path"].endswith("sentinel_data.db"))
 
     def test_pipeline_exception_isolation(self):

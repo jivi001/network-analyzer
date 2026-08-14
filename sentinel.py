@@ -88,20 +88,6 @@ import tempfile
 logger = logging.getLogger(__name__)
 
 
-def _validate_config(config: dict) -> dict:
-    """Validates configuration values and applies safe defaults for invalid options."""
-    validated = dict(config)
-
-    def _check_int(key, min_val, max_val, default):
-        val = validated.get(key, default)
-        try:
-            val = int(val)
-            if val < min_val or val > max_val:
-                logger.warning(f"Config '{key}' value {val} out of range [{min_val}, {max_val}]. Resetting to {default}.")
-                val = default
-        except (ValueError, TypeError):
-            logger.warning(f"Config '{key}' invalid. Resetting to {default}.")
-            val = default
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -132,8 +118,8 @@ def _validate_config(config: dict) -> dict:
         validated[key] = val
 
     _check_int("packet_buffer_size", 10, 10000, 500)
-    _check_int("packet_queue_size", 100, 100000, 5000)
-    _check_int("refresh_fps", 1, 30, 4)
+    _check_int("packet_queue_size", 100, 100000, 10000)
+    _check_int("refresh_fps", 1, 30, 10)
     _check_int("dedup_window", 1, 3600, 60)
     _check_int("max_alerts", 10, 100000, 100)
 
@@ -160,8 +146,8 @@ def load_config(config_path_override: Optional[str] = None) -> dict:
     config = {
         "database_path": get_absolute_path("sentinel_data.db"),
         "packet_buffer_size": 500,
-        "packet_queue_size": 5000,
-        "refresh_fps": 4,
+        "packet_queue_size": 10000,
+        "refresh_fps": 10,
         "default_filter": "",
         "privacy_mask": False,
         "rules_directory": get_absolute_path("rules"),
@@ -280,14 +266,23 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     dashboard = LiveDashboard(stats, alert_manager, privacy)
 
     packet_buffer_size = config.get("packet_buffer_size", 500)
-    packet_queue_size = config.get("packet_queue_size", 5000)
+    packet_queue_size = config.get("packet_queue_size", 10000)
     packet_buffer = deque(maxlen=packet_buffer_size)
     packet_queue = Queue(maxsize=packet_queue_size)
-    packet_counter = [0]
-    dropped_packets = [0]
+    
+    # Granular drop-reason & lifecycle metrics
+    captured_count = [0]
+    enqueued_count = [0]
+    processed_count = [0]
+    queue_dropped_count = [0]
+    processing_errors_count = [0]
+    pcap_errors_count = [0]
+    db_errors_count = [0]
+
     pending_alerts: List[AlertInfo] = []
     degraded_subsystems: dict = {}
-    lock = threading.Lock()
+    buffer_lock = threading.Lock()
+    alert_lock = threading.Lock()
 
     # Create temporary PCAP for streaming packets (no RAM accumulation)
     temp_pcap_file = tempfile.NamedTemporaryFile(suffix=".pcap", delete=False)
@@ -301,6 +296,7 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     except Exception as e:
         logger.error(f"Failed to initialize PCAP streaming writer: {e}")
         degraded_subsystems["pcap"] = "write_init_error"
+        pcap_errors_count[0] += 1
 
     # Create session record
     session = SessionInfo(
@@ -313,67 +309,98 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     session_id = db.create_session(session)
 
     def on_packet(raw_pkt):
-        """Capture callback: lightweight queue enqueue only."""
+        """Capture callback: lightweight bounded queue enqueue only."""
+        captured_count[0] += 1
         try:
             packet_queue.put_nowait(raw_pkt)
+            enqueued_count[0] += 1
         except Full:
-            dropped_packets[0] += 1
+            queue_dropped_count[0] += 1
 
     def flush_alert_batch():
         """Flush accumulated alerts to database."""
         nonlocal pending_alerts
-        if not pending_alerts:
-            return
-        with lock:
+        with alert_lock:
+            if not pending_alerts:
+                return
             batch_to_save = pending_alerts[:]
             pending_alerts.clear()
         try:
             db.save_alerts_batch(batch_to_save)
             degraded_subsystems.pop("db", None)
         except Exception as e:
+            db_errors_count[0] += 1
             logger.error(f"Database batch alert save error: {e}")
             degraded_subsystems["db"] = "write_error"
 
-    def process_pending_packets(max_packets: int = 250):
-        """Drain queued capture packets into stats, detection, PCAP writer, and display buffers."""
-        processed = 0
-        while processed < max_packets:
+    # Dedicated Background Packet Processor Thread
+    processing_running = threading.Event()
+    processing_running.set()
+
+    def packet_processing_worker():
+        """
+        High-throughput worker thread continuously draining packet_queue into:
+        - Layer decoder (process_packet)
+        - StatsAggregator (EMA rate, protocols, top talkers)
+        - DetectionPipeline (rules, entropy, ARP, port scans)
+        - PCAP Streaming Writer (disk-backed)
+        - Recent packets buffer (bounded deque for TUI display)
+        - Alert batch queue (batched SQLite persistence)
+        """
+        while processing_running.is_set() or not packet_queue.empty():
             try:
-                raw_pkt = packet_queue.get_nowait()
+                raw_pkt = packet_queue.get(timeout=0.05)
             except Empty:
-                break
+                continue
 
-            with lock:
-                packet_counter[0] += 1
-                pkt_info = process_packet(raw_pkt, packet_counter[0])
+            try:
+                processed_count[0] += 1
+                pkt_info = process_packet(raw_pkt, processed_count[0])
 
-                if pkt_info:
+                if pkt_info is not None:
+                    # 1. Update stats
                     stats.update(pkt_info)
 
-                    for alert in detection_pipeline.evaluate(pkt_info):
-                        alert.session_id = session_id
-                        if alert_manager.add(alert):
-                            pending_alerts.append(alert)
+                    # 2. Evaluate detection pipeline
+                    try:
+                        for alert in detection_pipeline.evaluate(pkt_info):
+                            alert.session_id = session_id
+                            if alert_manager.add(alert):
+                                with alert_lock:
+                                    pending_alerts.append(alert)
+                    except Exception as e:
+                        logger.error(f"Detection evaluation error: {e}")
+                        degraded_subsystems["detection"] = "eval_error"
 
-                    packet_buffer.append(pkt_info)
+                    # 3. Append to bounded TUI display buffer
+                    with buffer_lock:
+                        packet_buffer.append(pkt_info)
 
-                    # Stream packet to disk via PCAP writer
+                    # 4. Stream packet to disk via PCAP writer
                     if pcap_writer:
                         try:
                             pcap_writer.write(raw_pkt)
                         except Exception as e:
+                            pcap_errors_count[0] += 1
                             logger.error(f"PCAP stream write error: {e}")
                             degraded_subsystems["pcap"] = "disk_write_error"
+                else:
+                    processing_errors_count[0] += 1
 
-            packet_queue.task_done()
-            processed += 1
+            except Exception as e:
+                processing_errors_count[0] += 1
+                logger.error(f"Packet processing error: {e}")
+            finally:
+                packet_queue.task_done()
 
-        if len(pending_alerts) >= 50:
-            flush_alert_batch()
+            # Flush alert batch if accumulated
+            if len(pending_alerts) >= 50:
+                flush_alert_batch()
 
-        return processed
+    # Start capture and processing worker
+    processor_thread = threading.Thread(target=packet_processing_worker, daemon=True)
+    processor_thread.start()
 
-    # Start capture
     try:
         sniffer.start(
             interface=interface if interface else None,
@@ -382,12 +409,12 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
         )
         stats.start_rate_calculator()
 
-        refresh_fps = config.get("refresh_fps", 4)
+        refresh_fps = config.get("refresh_fps", 10)
         refresh_interval = 1.0 / refresh_fps
         paused = False
         recent_latencies: deque = deque(maxlen=10)
 
-        console.clear()
+        clear_screen()
         with Live(
             dashboard.get_renderable(),
             console=console,
@@ -397,20 +424,26 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
             while sniffer.is_running():
                 try:
                     t_start = time.perf_counter()
-                    if not paused:
-                        process_pending_packets()
+                    with buffer_lock:
+                        current_packets = list(packet_buffer)
                     t_elapsed_ms = (time.perf_counter() - t_start) * 1000.0
                     recent_latencies.append(t_elapsed_ms)
                     avg_lat = sum(recent_latencies) / len(recent_latencies) if recent_latencies else 0.0
 
                     dashboard.update(
-                        packets_buffer=list(packet_buffer),
-                        dropped_count=dropped_packets[0],
+                        packets_buffer=current_packets,
+                        captured_count=captured_count[0],
+                        enqueued_count=enqueued_count[0],
+                        processed_count=processed_count[0],
+                        dropped_count=queue_dropped_count[0],
                         queue_depth=packet_queue.qsize(),
                         queue_capacity=packet_queue_size,
                         paused=paused,
                         degraded_subsystems=degraded_subsystems,
                         avg_latency_ms=avg_lat,
+                        processing_errors=processing_errors_count[0],
+                        pcap_errors=pcap_errors_count[0],
+                        db_errors=db_errors_count[0],
                     )
                     live.update(dashboard.get_renderable())
 
@@ -470,28 +503,9 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
         # 1. Stop capture producer
         sniffer.stop()
 
-        # 2. Drain queue until Empty
-        drain_start = time.time()
-        while not packet_queue.empty() and (time.time() - drain_start < 5.0):
-            try:
-                raw_pkt = packet_queue.get_nowait()
-                packet_counter[0] += 1
-                pkt_info = process_packet(raw_pkt, packet_counter[0])
-                if pkt_info:
-                    stats.update(pkt_info)
-                    for alert in detection_pipeline.evaluate(pkt_info):
-                        alert.session_id = session_id
-                        if alert_manager.add(alert):
-                            pending_alerts.append(alert)
-                    packet_buffer.append(pkt_info)
-                    if pcap_writer:
-                        try:
-                            pcap_writer.write(raw_pkt)
-                        except Exception:
-                            pass
-                packet_queue.task_done()
-            except Empty:
-                break
+        # 2. Stop new enqueue and wait for processor worker to drain remaining packets
+        processing_running.clear()
+        processor_thread.join(timeout=3.0)
 
         # 3. Flush alert batch
         flush_alert_batch()
@@ -518,9 +532,16 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
 
     console.print()
     console.print(f"[bold green]Capture stopped.[/bold green]")
-    console.print(f"  Packets: {snapshot.total_packets:,} | Bytes: {snapshot.total_bytes:,} | Alerts: {alert_manager.get_count()}")
-    if dropped_packets[0]:
-        console.print(f"  Dropped by application queue: {dropped_packets[0]:,}")
+    console.print(
+        f"  Captured: {captured_count[0]:,} | Processed: {processed_count[0]:,} | "
+        f"Bytes: {format_bytes(snapshot.total_bytes)} | Alerts: {alert_manager.get_count():,}"
+    )
+    if queue_dropped_count[0] > 0 or processing_errors_count[0] > 0 or pcap_errors_count[0] > 0 or db_errors_count[0] > 0:
+        console.print(
+            f"  [yellow]Loss/Errors Breakdown:[/yellow] "
+            f"Queue Dropped: {queue_dropped_count[0]:,} | Decode Errors: {processing_errors_count[0]:,} | "
+            f"PCAP Errors: {pcap_errors_count[0]:,} | DB Errors: {db_errors_count[0]:,}"
+        )
     console.print()
 
     # Offer export
