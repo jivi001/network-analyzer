@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 sentinel = "sentinel:main"
+sentinal = "sentinel:main"
 
 [tool.setuptools]
 py-modules = ["sentinel"]
