@@ -22,7 +22,6 @@ import threading
 from collections import deque
 from datetime import datetime
 from queue import Empty, Full, Queue
-from typing import Optional, List, Dict, Set, Any
 
 if sys.platform == 'win32':
     try:
@@ -265,38 +264,12 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     sniffer = PacketSniffer()
     dashboard = LiveDashboard(stats, alert_manager, privacy)
 
-    packet_buffer_size = config.get("packet_buffer_size", 500)
-    packet_queue_size = config.get("packet_queue_size", 10000)
-    packet_buffer = deque(maxlen=packet_buffer_size)
-    packet_queue = Queue(maxsize=packet_queue_size)
-    
-    # Granular drop-reason & lifecycle metrics
-    captured_count = [0]
-    enqueued_count = [0]
-    processed_count = [0]
-    queue_dropped_count = [0]
-    processing_errors_count = [0]
-    pcap_errors_count = [0]
-    db_errors_count = [0]
-
-    pending_alerts: List[AlertInfo] = []
-    degraded_subsystems: dict = {}
-    buffer_lock = threading.Lock()
-    alert_lock = threading.Lock()
-
-    # Create temporary PCAP for streaming packets (no RAM accumulation)
-    temp_pcap_file = tempfile.NamedTemporaryFile(suffix=".pcap", delete=False)
-    temp_pcap_path = temp_pcap_file.name
-    temp_pcap_file.close()
-
-    pcap_writer = None
-    try:
-        import scapy.all as scapy
-        pcap_writer = scapy.PcapWriter(temp_pcap_path, sync=True)
-    except Exception as e:
-        logger.error(f"Failed to initialize PCAP streaming writer: {e}")
-        degraded_subsystems["pcap"] = "write_init_error"
-        pcap_errors_count[0] += 1
+    packet_buffer = deque(maxlen=config.get("packet_buffer_size", 500))
+    packet_queue = Queue(maxsize=config.get("packet_queue_size", 5000))
+    raw_packets = []
+    packet_counter = [0]  # Mutable counter for closure
+    dropped_packets = [0]
+    lock = threading.Lock()
 
     # Create session record
     session = SessionInfo(
@@ -309,97 +282,48 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     session_id = db.create_session(session)
 
     def on_packet(raw_pkt):
-        """Capture callback: lightweight bounded queue enqueue only."""
-        captured_count[0] += 1
+        """Capture callback: keep sniffer thread non-blocking."""
         try:
             packet_queue.put_nowait(raw_pkt)
-            enqueued_count[0] += 1
         except Full:
-            queue_dropped_count[0] += 1
+            dropped_packets[0] += 1
 
-    def flush_alert_batch():
-        """Flush accumulated alerts to database."""
-        nonlocal pending_alerts
-        with alert_lock:
-            if not pending_alerts:
-                return
-            batch_to_save = pending_alerts[:]
-            pending_alerts.clear()
-        try:
-            db.save_alerts_batch(batch_to_save)
-            degraded_subsystems.pop("db", None)
-        except Exception as e:
-            db_errors_count[0] += 1
-            logger.error(f"Database batch alert save error: {e}")
-            degraded_subsystems["db"] = "write_error"
-
-    # Dedicated Background Packet Processor Thread
-    processing_running = threading.Event()
-    processing_running.set()
-
-    def packet_processing_worker():
-        """
-        High-throughput worker thread continuously draining packet_queue into:
-        - Layer decoder (process_packet)
-        - StatsAggregator (EMA rate, protocols, top talkers)
-        - DetectionPipeline (rules, entropy, ARP, port scans)
-        - PCAP Streaming Writer (disk-backed)
-        - Recent packets buffer (bounded deque for TUI display)
-        - Alert batch queue (batched SQLite persistence)
-        """
-        while processing_running.is_set() or not packet_queue.empty():
+    def process_pending_packets(max_packets: int = 250):
+        """Drain queued capture packets into stats, detection, and display buffers."""
+        processed = 0
+        while processed < max_packets:
             try:
-                raw_pkt = packet_queue.get(timeout=0.05)
+                raw_pkt = packet_queue.get_nowait()
             except Empty:
-                continue
+                break
 
-            try:
-                processed_count[0] += 1
-                pkt_info = process_packet(raw_pkt, processed_count[0])
+            with lock:
+                packet_counter[0] += 1
+                pkt_info = process_packet(raw_pkt, packet_counter[0])
 
-                if pkt_info is not None:
-                    # 1. Update stats
+                if pkt_info:
                     stats.update(pkt_info)
 
-                    # 2. Evaluate detection pipeline
-                    try:
-                        for alert in detection_pipeline.evaluate(pkt_info):
-                            alert.session_id = session_id
-                            if alert_manager.add(alert):
-                                with alert_lock:
-                                    pending_alerts.append(alert)
-                    except Exception as e:
-                        logger.error(f"Detection evaluation error: {e}")
-                        degraded_subsystems["detection"] = "eval_error"
+                    for alert in detection_pipeline.evaluate(pkt_info):
+                        alert.session_id = session_id
+                        if alert_manager.add(alert):
+                            db.save_alert(alert)
 
-                    # 3. Append to bounded TUI display buffer
-                    with buffer_lock:
-                        packet_buffer.append(pkt_info)
+                    packet_buffer.append(pkt_info)
+                    raw_packets.append(raw_pkt)
 
-                    # 4. Stream packet to disk via PCAP writer
-                    if pcap_writer:
-                        try:
-                            pcap_writer.write(raw_pkt)
-                        except Exception as e:
-                            pcap_errors_count[0] += 1
-                            logger.error(f"PCAP stream write error: {e}")
-                            degraded_subsystems["pcap"] = "disk_write_error"
-                else:
-                    processing_errors_count[0] += 1
+            packet_queue.task_done()
+            processed += 1
 
-            except Exception as e:
-                processing_errors_count[0] += 1
-                logger.error(f"Packet processing error: {e}")
-            finally:
-                packet_queue.task_done()
+        return processed
 
-            # Flush alert batch if accumulated
-            if len(pending_alerts) >= 50:
-                flush_alert_batch()
-
-    # Start capture and processing worker
-    processor_thread = threading.Thread(target=packet_processing_worker, daemon=True)
-    processor_thread.start()
+    # Start capture
+    console.print()
+    console.print(f"[bold green]Starting capture[/bold green] on {interface or 'default interface'}...")
+    if bpf_filter:
+        console.print(f"  Filter: [yellow]{bpf_filter}[/yellow]")
+    console.print("  Press [bold]Ctrl+C[/bold] to stop capture")
+    console.print()
 
     try:
         sniffer.start(
@@ -423,30 +347,11 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
         ) as live:
             while sniffer.is_running():
                 try:
-                    t_start = time.perf_counter()
-                    with buffer_lock:
-                        current_packets = list(packet_buffer)
-                    t_elapsed_ms = (time.perf_counter() - t_start) * 1000.0
-                    recent_latencies.append(t_elapsed_ms)
-                    avg_lat = sum(recent_latencies) / len(recent_latencies) if recent_latencies else 0.0
-
-                    dashboard.update(
-                        packets_buffer=current_packets,
-                        captured_count=captured_count[0],
-                        enqueued_count=enqueued_count[0],
-                        processed_count=processed_count[0],
-                        dropped_count=queue_dropped_count[0],
-                        queue_depth=packet_queue.qsize(),
-                        queue_capacity=packet_queue_size,
-                        paused=paused,
-                        degraded_subsystems=degraded_subsystems,
-                        avg_latency_ms=avg_lat,
-                        processing_errors=processing_errors_count[0],
-                        pcap_errors=pcap_errors_count[0],
-                        db_errors=db_errors_count[0],
-                    )
-                    live.update(dashboard.get_renderable())
-
+                    if not paused:
+                        process_pending_packets()
+                        dashboard.update(list(packet_buffer))
+                        live.update(dashboard.get_renderable())
+                    
                     # Keyboard handling for Windows
                     if sys.platform == 'win32':
                         import msvcrt
@@ -499,8 +404,7 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
         from rich.markup import escape
         console.print(f"[bold red]Error during capture:[/bold red] {escape(str(e))}")
     finally:
-        # DETERMINISTIC SHUTDOWN SEQUENCE:
-        # 1. Stop capture producer
+        process_pending_packets(max_packets=packet_queue.qsize())
         sniffer.stop()
 
         # 2. Stop new enqueue and wait for processor worker to drain remaining packets
@@ -532,16 +436,9 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
 
     console.print()
     console.print(f"[bold green]Capture stopped.[/bold green]")
-    console.print(
-        f"  Captured: {captured_count[0]:,} | Processed: {processed_count[0]:,} | "
-        f"Bytes: {format_bytes(snapshot.total_bytes)} | Alerts: {alert_manager.get_count():,}"
-    )
-    if queue_dropped_count[0] > 0 or processing_errors_count[0] > 0 or pcap_errors_count[0] > 0 or db_errors_count[0] > 0:
-        console.print(
-            f"  [yellow]Loss/Errors Breakdown:[/yellow] "
-            f"Queue Dropped: {queue_dropped_count[0]:,} | Decode Errors: {processing_errors_count[0]:,} | "
-            f"PCAP Errors: {pcap_errors_count[0]:,} | DB Errors: {db_errors_count[0]:,}"
-        )
+    console.print(f"  Packets: {snapshot.total_packets:,} | Bytes: {snapshot.total_bytes:,} | Alerts: {alert_manager.get_count()}")
+    if dropped_packets[0]:
+        console.print(f"  Dropped by application queue: {dropped_packets[0]:,}")
     console.print()
 
     # Offer export
@@ -719,9 +616,9 @@ def run_history_viewer(db: Database):
                     if session:
                         alerts = db.get_alerts(session_id=int(session_id))
                         display_session_detail(session, alerts)
-                        Prompt.ask("Press Enter to return to history menu", default="")
+                Prompt.ask("Press Enter to continue", default="")
             else:
-                Prompt.ask("Press Enter to return to history menu", default="")
+                Prompt.ask("Press Enter to continue", default="")
 
         elif choice == "2":
             # All alerts
@@ -734,20 +631,20 @@ def run_history_viewer(db: Database):
             else:
                 alerts = db.get_alerts(severity=severity.upper())
             display_alerts_history(alerts)
-            Prompt.ask("Press Enter to return to history menu", default="")
+            Prompt.ask("Press Enter to continue", default="")
 
         elif choice == "3":
             # Discovered hosts
             hosts = db.get_hosts()
             display_hosts_table(hosts)
-            Prompt.ask("Press Enter to return to history menu", default="")
+            Prompt.ask("Press Enter to continue", default="")
 
         elif choice == "4":
             # Search
             query = Prompt.ask("Search (IP address, date, or keyword)")
             sessions = db.search_sessions(query)
             display_sessions(sessions)
-            Prompt.ask("Press Enter to return to history menu", default="")
+            Prompt.ask("Press Enter to continue", default="")
 
         elif choice == "5":
             # Import JSON Data
@@ -756,7 +653,7 @@ def run_history_viewer(db: Database):
                 from storage.importer import Importer
                 importer = Importer(db)
                 if importer.import_json(filepath):
-                    console.print(f"\n[bold green]Successfully imported records from {filepath}[/bold green]")
+                    console.print(f"\n[bold green]✓ Successfully imported records from {filepath}[/bold green]")
                 else:
                     console.print("\n[bold red]Failed to import records.[/bold red]")
             else:

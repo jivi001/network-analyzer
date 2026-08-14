@@ -2,6 +2,7 @@ import time
 from typing import List
 
 from rich import box
+from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -53,7 +54,6 @@ def display_scan_results(result: ScanResult):
             Text.from_markup(summary_text),
             title="Scan Summary",
             border_style="blue",
-            box=box.ASCII,
         )
     )
     console.print()
@@ -64,7 +64,7 @@ def display_scan_results(result: ScanResult):
 
     # Host table
     host_table = Table(
-        show_header=True, header_style="bold magenta", expand=True, box=box.ASCII
+        show_header=True, header_style="bold magenta", expand=True
     )
     host_table.add_column("IP Address")
     host_table.add_column("Hostname")
@@ -98,7 +98,7 @@ def display_scan_results(result: ScanResult):
 
 def display_host_detail(host: HostInfo):
     """Detailed view of single host open ports."""
-    port_table = Table(show_header=True, header_style="bold yellow", expand=True, box=box.ASCII)
+    port_table = Table(show_header=True, header_style="bold yellow", expand=True)
     port_table.add_column("Port/Proto")
     port_table.add_column("Service & Version")
 
@@ -114,6 +114,5 @@ def display_host_detail(host: HostInfo):
             port_table,
             title=f"Port Details for {host.ip_address} ({host.hostname or 'No Hostname'})",
             border_style="cyan",
-            box=box.ASCII,
         )
     )

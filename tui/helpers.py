@@ -1,7 +1,7 @@
 import datetime
-from typing import List, Optional
+from typing import Optional, List
 
-from storage.models import AlertInfo, HostInfo, PacketInfo
+from storage.models import PacketInfo, AlertInfo, HostInfo
 from utils.constants import get_protocol_color, get_severity_props
 from utils.privacy import PrivacyFilter
 
@@ -9,7 +9,7 @@ from utils.privacy import PrivacyFilter
 def format_packet_row(
     packet: PacketInfo, privacy: Optional[PrivacyFilter] = None
 ) -> List[str]:
-    """Format a PacketInfo into a table row."""
+    """Format a PacketInfo into a list of strings for table row."""
     src = packet.src_ip
     dst = packet.dst_ip
 
@@ -21,17 +21,21 @@ def format_packet_row(
     dst_str = f"{dst}:{packet.dst_port}" if packet.dst_port else dst
 
     time_str = packet.timestamp_str or (
-        datetime.datetime.fromtimestamp(packet.timestamp).strftime("%H:%M:%S.%f")[:-3]
+        datetime.datetime.fromtimestamp(packet.timestamp).strftime(
+            "%H:%M:%S.%f"
+        )[:-3]
         if isinstance(packet.timestamp, (int, float)) and packet.timestamp > 0
         else str(packet.timestamp)
     )
+
+    proto_str = protocol_badge(packet.protocol)
 
     return [
         str(packet.id),
         time_str,
         src_str,
         dst_str,
-        protocol_badge(packet.protocol),
+        proto_str,
         str(packet.length),
         packet.service or "",
         truncate(packet.info or "", 60),
@@ -39,9 +43,11 @@ def format_packet_row(
 
 
 def format_alert_row(alert: AlertInfo) -> List[str]:
-    """Format alert for a table row."""
+    """Format alert for table row."""
     time_str = alert.timestamp_str or (
-        datetime.datetime.fromtimestamp(alert.timestamp).strftime("%Y-%m-%d %H:%M:%S")
+        datetime.datetime.fromtimestamp(alert.timestamp).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
         if isinstance(alert.timestamp, (int, float)) and alert.timestamp > 0
         else str(alert.timestamp or "")
     )
@@ -56,15 +62,17 @@ def format_alert_row(alert: AlertInfo) -> List[str]:
 
 
 def format_host_row(host: HostInfo) -> List[str]:
-    """Format host for a table row."""
+    """Format host for table row."""
+    first_seen = str(host.first_seen or "")
+    last_seen = str(host.last_seen or "")
     return [
         host.ip_address,
         host.mac_address or "",
         host.hostname or "",
         str(len(host.open_ports)) if host.open_ports else "0",
         host.os_guess or "",
-        str(host.first_seen or ""),
-        str(host.last_seen or ""),
+        first_seen,
+        last_seen,
         host.source or "",
     ]
 
@@ -89,10 +97,10 @@ def severity_badge(severity: str) -> str:
 def build_bar(value: float, max_value: float, width: int = 20) -> str:
     """ASCII bar chart."""
     if max_value <= 0:
-        return "." * width
+        return "░" * width
     ratio = min(value / max_value, 1.0)
     filled_blocks = int(ratio * width)
-    return "#" * filled_blocks + "." * (width - filled_blocks)
+    return "█" * filled_blocks + "░" * (width - filled_blocks)
 
 
 def truncate(text: str, max_len: int = 50) -> str:
@@ -106,4 +114,5 @@ def truncate(text: str, max_len: int = 50) -> str:
 
 def format_elapsed(seconds: float) -> str:
     """Format seconds to HH:MM:SS."""
-    return str(datetime.timedelta(seconds=int(seconds)))
+    td = datetime.timedelta(seconds=int(seconds))
+    return str(td)

@@ -1,5 +1,5 @@
 """
-constants.py - Port-service mappings, protocol names, color codes, and shared constants.
+constants.py — Port-service mappings, protocol names, color codes, and shared constants.
 """
 
 # Well-known port to service name mappings
@@ -73,10 +73,10 @@ PROTOCOL_COLORS = {
 
 # Alert severity levels and their display properties
 SEVERITY_LEVELS = {
-    "INFO": {"color": "blue", "icon": "INFO", "priority": 0},
-    "WARNING": {"color": "yellow", "icon": "WARN", "priority": 1},
-    "HIGH": {"color": "red", "icon": "HIGH", "priority": 2},
-    "CRITICAL": {"color": "bright_red bold", "icon": "CRIT", "priority": 3},
+    "INFO": {"color": "blue", "icon": "ℹ️", "priority": 0},
+    "WARNING": {"color": "yellow", "icon": "⚠️", "priority": 1},
+    "HIGH": {"color": "red", "icon": "🔴", "priority": 2},
+    "CRITICAL": {"color": "bright_red bold", "icon": "🚨", "priority": 3},
 }
 
 # TCP flag names
@@ -184,8 +184,6 @@ SCAN_TYPES = {
         "name": "Quick Discovery",
         "args": "-sn",
         "description": "Ping sweep - discover live hosts only",
-        "requires_admin": False,
-        "cost": "Low / Fast",
     },
     "port": {
         "name": "Port Scan",
@@ -216,10 +214,10 @@ RATE_CALC_INTERVAL = 1.0
 APP_NAME = "my-sentinel"
 APP_VERSION = "1.0.0"
 APP_BANNER = r"""
-  +----------------------------------------------+
-  |              my-sentinel v1.0.0              |
-  |      Network Traffic Analyzer & Scanner      |
-  +----------------------------------------------+
+  ╔══════════════════════════════════════════════╗
+  ║         🛡️  my-sentinel v1.0.0               ║
+  ║      Network Traffic Analyzer & Scanner      ║
+  ╚══════════════════════════════════════════════╝
 """
 
 

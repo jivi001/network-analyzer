@@ -8,4 +8,4 @@ match:
 action:
   alert: true
   log: true
-  message: "Cleartext {service} traffic: {src_ip} -> {dst_ip}:{dst_port}"
+  message: "Cleartext {service} traffic: {src_ip} → {dst_ip}:{dst_port}"
