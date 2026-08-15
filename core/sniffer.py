@@ -4,6 +4,9 @@ import threading
 import scapy.all as scapy
 from typing import Callable, Optional, List
 
+scapy.conf.verb = 0
+logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
+
 logger = logging.getLogger(__name__)
 
 

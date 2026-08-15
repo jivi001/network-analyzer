@@ -1,11 +1,10 @@
 import time
 from typing import List, Optional
-
+from rich.console import Console
 from rich.layout import Layout
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-
 from storage.models import PacketInfo
 from utils.privacy import PrivacyFilter
 from utils.constants import APP_VERSION, format_bytes
@@ -26,22 +25,60 @@ class LiveDashboard:
         stats_aggregator,
         alert_manager,
         privacy_filter: Optional[PrivacyFilter] = None,
+        dashboard_console: Optional[Console] = None,
+        max_render_rows: int = 50,
     ):
         self.stats_aggregator = stats_aggregator
         self.alert_manager = alert_manager
         self.privacy_filter = privacy_filter
+        self.console = dashboard_console or console
+        self.max_render_rows = max(10, min(max_render_rows, 100))
         self.start_time = time.time()
+
+        self.layout = Layout()
+        self.packets_buffer = []
+        self._last_height = 0
+        self._last_width = 0
+
+        # TUI Render Telemetry (Rolling EMA & Frame Counter)
+        self.total_frames = 0
+        self.last_render_ms = 0.0
+        self.avg_render_ms = 0.0
+        self.peak_render_ms = 0.0
+
+        self._rebuild_layout_structure(
+            self.console.height or self.console.size.height or 40,
+            self.console.width or self.console.size.width or 120,
+        )
+
+    def _rebuild_layout_structure(self, term_height: int, term_width: int):
+        """Dynamically allocate vertical and horizontal layout proportions based on terminal size."""
+        self._last_height = term_height
+        self._last_width = term_width
+
+        # Determine alerts panel size dynamically: compact on small screens, expanded on tall screens
+        if term_height < 30:
+            alerts_size = 4
+        elif term_height < 45:
+            alerts_size = 5
+        else:
+            alerts_size = 6
 
         self.layout = Layout()
         self.layout.split_column(
             Layout(name="header", size=3),
             Layout(name="main"),
-            Layout(name="alerts", size=8),
+            Layout(name="alerts", size=alerts_size),
             Layout(name="footer", size=3),
         )
 
+        # Allocate 70% width to packet table on standard/wide terminals, 60% on smaller terminals
+        left_ratio = 7 if term_width >= 110 else 6
+        right_ratio = 3 if term_width >= 110 else 4
+
         self.layout["main"].split_row(
-            Layout(name="left", ratio=6), Layout(name="right", ratio=4)
+            Layout(name="left", ratio=left_ratio),
+            Layout(name="right", ratio=right_ratio),
         )
 
         self.layout["right"].split_column(
@@ -49,10 +86,22 @@ class LiveDashboard:
             Layout(name="top_talkers", ratio=1),
         )
 
-        self.packets_buffer = []
-
     def build_layout(self) -> Layout:
         return self.layout
+
+    def calculate_visible_rows(self) -> int:
+        """Calculate the maximum visible packet rows based on current terminal height."""
+        term_height = self.console.height or self.console.size.height or 40
+        if term_height < 30:
+            alerts_size = 4
+        elif term_height < 45:
+            alerts_size = 5
+        else:
+            alerts_size = 6
+
+        available_main_height = max(8, term_height - 3 - alerts_size - 3)
+        usable_packet_rows = max(4, available_main_height - 4)
+        return min(usable_packet_rows, self.max_render_rows)
 
     def update(
         self,
@@ -69,12 +118,24 @@ class LiveDashboard:
         processing_errors: int = 0,
         pcap_errors: int = 0,
         db_errors: int = 0,
+        captured_pps: float = 0.0,
     ):
-        self.packets_buffer = packets_buffer[-20:]  # Keep last 20 for table display
+        t_start = time.perf_counter()
+        term_height = self.console.height or self.console.size.height or 40
+        term_width = self.console.width or self.console.size.width or 120
+
+        # Re-structure layout if terminal resized
+        if term_height != self._last_height or term_width != self._last_width:
+            self._rebuild_layout_structure(term_height, term_width)
+
+        # Calculate exact visible packet rows from available main panel height
+        visible_rows = self.calculate_visible_rows()
+
+        # Snapshot-based slicing of the latest packets only
+        self.packets_buffer = packets_buffer[-visible_rows:] if packets_buffer else []
 
         # Header
         elapsed = format_elapsed(time.time() - self.start_time)
-        pause_badge = " [bold yellow]⏸ PAUSED (CAPTURE CONTINUES)[/bold yellow]" if paused else ""
         header_text = Text.assemble(
             ("my-sentinel v", "bold cyan"),
             (APP_VERSION, "bold cyan"),
@@ -88,18 +149,22 @@ class LiveDashboard:
 
         self.layout["header"].update(Panel(header_text, style="white on blue"))
 
-        # Left Panel (Packet Stream)
+        # Left Panel (Packet Stream) — Dynamic width and bounded expansion
         pkt_table = Table(
-            show_header=True, header_style="bold magenta", expand=True
+            show_header=True,
+            header_style="bold magenta",
+            expand=True,
+            show_edge=False,
+            pad_edge=False,
         )
-        pkt_table.add_column("#", width=5)
-        pkt_table.add_column("Time", width=12)
-        pkt_table.add_column("Source", width=20)
-        pkt_table.add_column("Destination", width=20)
-        pkt_table.add_column("Proto", width=6)
-        pkt_table.add_column("Length", width=8, justify="right")
-        pkt_table.add_column("Service", width=10)
-        pkt_table.add_column("Info")
+        pkt_table.add_column("#", width=6, no_wrap=True, justify="right")
+        pkt_table.add_column("Time", width=12, no_wrap=True)
+        pkt_table.add_column("Source", ratio=2, min_width=16, no_wrap=True)
+        pkt_table.add_column("Destination", ratio=2, min_width=16, no_wrap=True)
+        pkt_table.add_column("Proto", width=6, no_wrap=True)
+        pkt_table.add_column("Length", width=7, justify="right", no_wrap=True)
+        pkt_table.add_column("Service", width=9, no_wrap=True)
+        pkt_table.add_column("Info", ratio=3, overflow="ellipsis", no_wrap=True)
 
         if not self.packets_buffer:
             pkt_table.add_row("-", "-", "-", "[dim yellow]Waiting for live traffic...[/dim yellow]", "-", "-", "-", "-")
@@ -108,9 +173,9 @@ class LiveDashboard:
                 row = format_packet_row(pkt, self.privacy_filter)
                 pkt_table.add_row(*row)
 
-        stream_title = "Packet Stream (Live)"
+        stream_title = f"Packet Stream (Live — Showing Latest {len(self.packets_buffer)})"
         if paused:
-            stream_title = "Packet Stream (PAUSED — Capture Running)"
+            stream_title = f"Packet Stream (PAUSED — Latest {len(self.packets_buffer)} Shown)"
         self.layout["left"].update(
             Panel(pkt_table, title=stream_title)
         )
@@ -217,18 +282,32 @@ class LiveDashboard:
 
         # Footer Bar with honest metrics breakdown
         drop_style = "bold red" if dropped_count > 0 else "bold white"
+        rate_val = captured_pps if captured_pps > 0 else stats.packets_per_sec
         footer_text = (
-            f"Pkts: [bold]{stats.total_packets:,}[/bold] | "
+            f"Cap: [bold]{captured_count:,}[/bold] | "
+            f"Proc: [bold]{processed_count:,}[/bold] | "
             f"Dropped: [{drop_style}]{dropped_count:,}[/{drop_style}] | "
             f"Queue: [bold]{queue_depth:,}/{queue_capacity:,}[/bold] ({queue_util:.1f}%) | "
             f"Health: {health_str} | "
-            f"Rate: [bold]{stats.packets_per_sec:.1f} pps[/bold] | "
+            f"Rate: [bold]{rate_val:.1f} pps[/bold] | "
             f"Bytes: [bold]{format_bytes(stats.total_bytes)}[/bold] | "
             f"Lat: [bold]{avg_latency_ms:.1f}ms[/bold]"
         )
         self.layout["footer"].update(
             Panel(Text.from_markup(footer_text), style="black on green")
         )
+
+        # Record TUI render telemetry (EMA duration & peak)
+        t_elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+        self.last_render_ms = t_elapsed_ms
+        self.total_frames += 1
+        if self.total_frames == 1:
+            self.avg_render_ms = t_elapsed_ms
+            self.peak_render_ms = t_elapsed_ms
+        else:
+            self.avg_render_ms = (self.avg_render_ms * 0.9) + (t_elapsed_ms * 0.1)
+            if t_elapsed_ms > self.peak_render_ms:
+                self.peak_render_ms = t_elapsed_ms
 
     def get_renderable(self) -> Layout:
         return self.layout

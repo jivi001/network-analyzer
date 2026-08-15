@@ -6,12 +6,15 @@ from utils.constants import get_protocol_color, get_severity_props
 from utils.privacy import PrivacyFilter
 
 
+from rich.markup import escape
+
+
 def format_packet_row(
     packet: PacketInfo, privacy: Optional[PrivacyFilter] = None
 ) -> List[str]:
-    """Format a PacketInfo into a list of strings for table row."""
-    src = packet.src_ip
-    dst = packet.dst_ip
+    """Format a PacketInfo into a list of strings for table row with markup escaping."""
+    src = packet.src_ip or ""
+    dst = packet.dst_ip or ""
 
     if privacy and privacy.enabled:
         src = privacy.ip(src)
@@ -25,7 +28,7 @@ def format_packet_row(
             "%H:%M:%S.%f"
         )[:-3]
         if isinstance(packet.timestamp, (int, float)) and packet.timestamp > 0
-        else str(packet.timestamp)
+        else str(packet.timestamp or "")
     )
 
     proto_str = protocol_badge(packet.protocol)
@@ -33,17 +36,17 @@ def format_packet_row(
     return [
         str(packet.id),
         time_str,
-        src_str,
-        dst_str,
+        escape(src_str),
+        escape(dst_str),
         proto_str,
         str(packet.length),
-        packet.service or "",
-        truncate(packet.info or "", 60),
+        escape(packet.service or ""),
+        escape(truncate(packet.info or "", 60)),
     ]
 
 
 def format_alert_row(alert: AlertInfo) -> List[str]:
-    """Format alert for table row."""
+    """Format alert for table row with markup escaping."""
     time_str = alert.timestamp_str or (
         datetime.datetime.fromtimestamp(alert.timestamp).strftime(
             "%Y-%m-%d %H:%M:%S"
@@ -54,26 +57,26 @@ def format_alert_row(alert: AlertInfo) -> List[str]:
     return [
         time_str,
         severity_badge(alert.severity),
-        alert.rule_name,
-        alert.src_ip or "",
-        alert.dst_ip or "",
-        truncate(alert.message, 80),
+        escape(alert.rule_name),
+        escape(alert.src_ip or ""),
+        escape(alert.dst_ip or ""),
+        escape(truncate(alert.message, 80)),
     ]
 
 
 def format_host_row(host: HostInfo) -> List[str]:
-    """Format host for table row."""
+    """Format host for table row with markup escaping."""
     first_seen = str(host.first_seen or "")
     last_seen = str(host.last_seen or "")
     return [
-        host.ip_address,
-        host.mac_address or "",
-        host.hostname or "",
+        escape(host.ip_address),
+        escape(host.mac_address or ""),
+        escape(host.hostname or ""),
         str(len(host.open_ports)) if host.open_ports else "0",
-        host.os_guess or "",
-        first_seen,
-        last_seen,
-        host.source or "",
+        escape(host.os_guess or ""),
+        escape(first_seen),
+        escape(last_seen),
+        escape(host.source or ""),
     ]
 
 

@@ -3,7 +3,7 @@
 
 general:
   app_name: "my-sentinel"
-  version: "1.0.0"
+  version: "1.0.1"
   # Database file location (relative to project root)
   database_path: "sentinel_data.db"
 
@@ -22,13 +22,21 @@ capture:
   privacy_mask: false
 
 scanner:
-  # Default Nmap arguments for each scan type
-  quick_scan: "-sn"
-  port_scan: "-sS --top-ports 1000"
-  full_scan: "-sV -O --top-ports 1000"
-  stealth_scan: "-sS -T2 --top-ports 100"
-  # Scan timeout in seconds
+  # Scan timeout in seconds applied to all profiles
   timeout: 300
+  # Default Nmap arguments for each scan profile
+  discovery_scan: "-sn"
+  fast_discovery_scan: "-sn -T4"
+  top_ports_scan: "-sS --top-ports 1000"
+  service_scan: "-sS -sV --top-ports 1000"
+  version_scan: "-sV --top-ports 1000"
+  os_detection_scan: "-sS -O --top-ports 1000"
+  comprehensive_scan: "-sS -sV -O --top-ports 1000"
+  udp_top_scan: "-sU --top-ports 100"
+  tcp_connect_scan: "-sT --top-ports 1000"
+  aggressive_scan: "-A --top-ports 1000"
+  ipv6_discovery_scan: "-6 -sn"
+  stealth_scan: "-sS -T2 --top-ports 100"
 
 detection:
   # Path to YAML rule files directory

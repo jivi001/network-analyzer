@@ -2,23 +2,20 @@ from typing import List
 
 from rich import box
 from rich.align import Align
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.prompt import Prompt
+from rich.text import Text
 
 from storage.models import SessionInfo, AlertInfo, HostInfo
 from utils.constants import format_bytes
 from tui.helpers import format_alert_row, format_host_row
-from utils.constants import format_bytes
-from tui.menu import clear_screen
-
-console = Console()
+from utils.console import console, screen_manager, ScreenState
 
 
 def display_history_menu() -> str:
-    """Sub-menu for history mode."""
-    clear_screen()
+    """Sub-menu for history mode under TASK_CONFIG screen state."""
+    screen_manager.set_state(ScreenState.TASK_CONFIG)
 
     menu_text = Text()
     menu_text.append("\n")
@@ -43,14 +40,19 @@ def display_history_menu() -> str:
     console.print()
 
     while True:
-        choice = Prompt.ask("Select an option", choices=["1", "2", "3", "4", "5", "6"], default="1")
+        choice = Prompt.ask(
+            "Select an option",
+            choices=["1", "2", "3", "4", "5", "6"],
+            default="1",
+            console=console,
+        )
         if choice in ["1", "2", "3", "4", "5", "6"]:
             return choice
 
 
 def display_sessions(sessions: List[SessionInfo]):
-    """Rich table of sessions."""
-    clear_screen()
+    """Rich table of sessions under TASK_COMPLETE screen state."""
+    screen_manager.set_state(ScreenState.TASK_COMPLETE)
     if not sessions:
         console.print(Panel("[yellow]No sessions recorded yet.[/yellow]", title="Recent Sessions", box=box.ASCII))
         return
@@ -81,8 +83,8 @@ def display_sessions(sessions: List[SessionInfo]):
 
 
 def display_alerts_history(alerts: List[AlertInfo]):
-    """Paginated alert table."""
-    console.clear()
+    """Paginated alert table under TASK_COMPLETE screen state."""
+    screen_manager.set_state(ScreenState.TASK_COMPLETE)
     if not alerts:
         console.print(Panel("[yellow]No alerts recorded in database.[/yellow]", title="Security Alerts", box=box.ASCII))
         return
@@ -102,8 +104,8 @@ def display_alerts_history(alerts: List[AlertInfo]):
 
 
 def display_hosts_table(hosts: List[HostInfo]):
-    """Discovered hosts table."""
-    console.clear()
+    """Discovered hosts table under TASK_COMPLETE screen state."""
+    screen_manager.set_state(ScreenState.TASK_COMPLETE)
     if not hosts:
         console.print(Panel("[yellow]No discovered hosts recorded yet.[/yellow]", title="Discovered Hosts", box=box.ASCII))
         return
@@ -125,8 +127,8 @@ def display_hosts_table(hosts: List[HostInfo]):
 
 
 def display_session_detail(session: SessionInfo, alerts: List[AlertInfo]):
-    """Drill into a session."""
-    console.clear()
+    """Drill into a session under TASK_COMPLETE screen state."""
+    screen_manager.set_state(ScreenState.TASK_COMPLETE)
 
     # Summary panel
     summary = (

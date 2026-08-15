@@ -2,7 +2,6 @@ import time
 from typing import List
 
 from rich import box
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -20,13 +19,19 @@ def display_scan_progress(target: str, scan_type: str, scan_args: str = ""):
     profile_name = profile_info.get("name", scan_type)
     args_str = scan_args or profile_info.get("args", "")
 
+    progress_body = (
+        f"Target: [bold cyan]{target}[/bold cyan]\n"
+        f"Profile: [bold yellow]{profile_name}[/bold yellow] ({scan_type})\n"
+        f"Arguments: [dim]{args_str}[/dim]\n"
+        f"Status: [bold green]Running...[/bold green]"
+    )
+    if profile_info.get("warning"):
+        progress_body += f"\n[bold red]Note:[/bold red] {profile_info['warning']}"
+
     console.print()
     console.print(
         Panel(
-            f"Target: [bold cyan]{target}[/bold cyan]\n"
-            f"Profile: [bold yellow]{profile_name}[/bold yellow] ({scan_type})\n"
-            f"Arguments: [dim]{args_str}[/dim]\n"
-            f"Status: [bold green]Running...[/bold green]",
+            progress_body,
             title="SCAN IN PROGRESS",
             border_style="cyan",
             box=box.ASCII,
@@ -74,7 +79,7 @@ def display_scan_results(result: ScanResult):
     host_table.add_column("OS Guess")
 
     for host in result.hosts:
-        open_ports_summary = ", ".join(host.open_ports) if host.open_ports else "None"
+        open_ports_summary = ", ".join(str(p) for p in host.open_ports) if host.open_ports else "None"
         if len(open_ports_summary) > 40:
             open_ports_summary = open_ports_summary[:37] + "..."
 

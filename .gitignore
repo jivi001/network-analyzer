@@ -36,4 +36,6 @@ build/
 
 .agents
 .gemini
+*.old
+*.old.*
 

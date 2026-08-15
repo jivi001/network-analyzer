@@ -67,9 +67,8 @@ class TraceRoute:
                 str(hop['rtt']) if hop['ip'] != '* * *' else "*"
             )
             
-        # Rich tables are usually printed. To return as string we use Console
-        from rich.console import Console
-        import io
-        console = Console(file=io.StringIO(), force_terminal=False)
-        console.print(table)
-        return console.file.getvalue()
+        # Rich tables are usually printed. To return as string we capture from the shared console
+        from utils.console import console
+        with console.capture() as capture:
+            console.print(table)
+        return capture.get()

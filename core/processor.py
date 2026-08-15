@@ -24,7 +24,11 @@ def process_packet(raw_packet, packet_id: int) -> Optional[PacketInfo]:
         dt = datetime.fromtimestamp(ts_float)
         timestamp_str = dt.strftime("%H:%M:%S.") + f"{dt.microsecond // 1000:03d}"
         date_str = dt.strftime("%Y-%m-%d")
-        length = len(raw_packet) if hasattr(raw_packet, "__len__") else 0
+        length = (
+            raw_packet.wirelen
+            if hasattr(raw_packet, "wirelen") and raw_packet.wirelen is not None
+            else (len(raw_packet) if hasattr(raw_packet, "__len__") else 0)
+        )
     except Exception:
         return None
 

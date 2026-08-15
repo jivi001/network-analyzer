@@ -17,6 +17,7 @@ class StatsAggregator:
         self.ip_bytes: Counter = Counter()
         self.unique_src_ips: Set[str] = set()
         self.unique_dst_ips: Set[str] = set()
+        self.unique_hosts: Set[str] = set()
 
         self.packets_per_sec: float = 0.0
         self.bytes_per_sec: float = 0.0
@@ -39,37 +40,53 @@ class StatsAggregator:
                 self.ip_packets[packet.src_ip] += 1
                 self.ip_bytes[packet.src_ip] += packet.length
                 self.unique_src_ips.add(packet.src_ip)
+                self.unique_hosts.add(packet.src_ip)
 
             if packet.dst_ip:
                 self.ip_packets[packet.dst_ip] += 1
                 self.ip_bytes[packet.dst_ip] += packet.length
                 self.unique_dst_ips.add(packet.dst_ip)
+                self.unique_hosts.add(packet.dst_ip)
 
     def get_snapshot(self) -> StatsSnapshot:
-        """Returns a snapshot of the current statistics."""
+        """Returns a snapshot of the current statistics without long-held locks."""
         with self.lock:
-            unique_total = len(self.unique_src_ips | self.unique_dst_ips)
-            elapsed = time.time() - self._start_time
-            avg_size = (
-                (self.total_bytes / self.total_packets)
-                if self.total_packets > 0
-                else 0.0
-            )
+            total_pkts = self.total_packets
+            total_bytes = self.total_bytes
+            pps = self.packets_per_sec
+            bps = self.bytes_per_sec
+            num_src = len(self.unique_src_ips)
+            num_dst = len(self.unique_dst_ips)
+            unique_total = len(self.unique_hosts)
+            proto_counts = dict(self.protocol_counts)
+            top_raw = self.ip_bytes.most_common(5)
+            top_talkers = [
+                {"ip": ip, "bytes": b, "packets": self.ip_packets[ip]}
+                for ip, b in top_raw
+            ]
 
-            return StatsSnapshot(
-                total_packets=self.total_packets,
-                total_bytes=self.total_bytes,
-                packets_per_sec=self.packets_per_sec,
-                bytes_per_sec=self.bytes_per_sec,
-                avg_packet_size=avg_size,
-                unique_src_hosts=len(self.unique_src_ips),
-                unique_dst_hosts=len(self.unique_dst_ips),
-                unique_hosts_total=unique_total,
-                protocol_counts=dict(self.protocol_counts),
-                protocol_percentages=self.get_protocol_distribution(),
-                top_talkers=self.get_top_talkers(n=5),
-                elapsed_seconds=elapsed,
-            )
+        # Heavy / derived calculations done outside lock
+        elapsed = time.time() - self._start_time
+        avg_size = (total_bytes / total_pkts) if total_pkts > 0 else 0.0
+        proto_pcts = (
+            {proto: round((count / total_pkts) * 100.0, 1) for proto, count in proto_counts.items()}
+            if total_pkts > 0 else {}
+        )
+
+        return StatsSnapshot(
+            total_packets=total_pkts,
+            total_bytes=total_bytes,
+            packets_per_sec=pps,
+            bytes_per_sec=bps,
+            avg_packet_size=avg_size,
+            unique_src_hosts=num_src,
+            unique_dst_hosts=num_dst,
+            unique_hosts_total=unique_total,
+            protocol_counts=proto_counts,
+            protocol_percentages=proto_pcts,
+            top_talkers=top_talkers,
+            elapsed_seconds=elapsed,
+        )
 
     def reset(self):
         """Resets all statistics."""
@@ -81,6 +98,7 @@ class StatsAggregator:
             self.ip_bytes.clear()
             self.unique_src_ips.clear()
             self.unique_dst_ips.clear()
+            self.unique_hosts.clear()
             self.packets_per_sec = 0.0
             self.bytes_per_sec = 0.0
             self._last_packets = 0
@@ -102,10 +120,12 @@ class StatsAggregator:
         with self.lock:
             if self.total_packets == 0:
                 return {}
-            return {
-                proto: round((count / self.total_packets) * 100.0, 1)
-                for proto, count in self.protocol_counts.items()
-            }
+            total = self.total_packets
+            counts = dict(self.protocol_counts)
+        return {
+            proto: round((count / total) * 100.0, 1)
+            for proto, count in counts.items()
+        }
 
     def start_rate_calculator(self):
         """Starts the background rate calculator thread."""

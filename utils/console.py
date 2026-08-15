@@ -48,14 +48,12 @@ def exit_alt_screen():
 
 def clear_screen():
     """
-    2. Explicit State Transitions & Screen Wiping:
-       Centralized screen-clearing and cursor-reset routine (\033[2J\033[H).
-       Executed immediately before any new view or menu renders.
-       3. Input Stream & Cursor Isolation:
-       Flushes stdout immediately after sending ANSI control sequences.
+    Centralized screen-clearing and cursor-reset routine.
+    Wipes viewport and scrollback buffer (\033[2J\033[3J\033[H\033[?25h)
+    and synchronizes the shared Rich console state.
     """
     if sys.stdout.isatty():
-        sys.stdout.write("\033[2J\033[H\033[?25h")
+        sys.stdout.write("\033[2J\033[3J\033[H\033[?25h")
         sys.stdout.flush()
     console.clear()
     if sys.stdout.isatty():
@@ -75,7 +73,7 @@ class ScreenManager:
     def set_state(self, new_state: ScreenState):
         """
         Transition to an isolated render state.
-        Wipes screen and homes cursor before rendering new view.
+        Wipes screen, clears scrollback, homes cursor, and establishes state ownership.
         """
         self._state = new_state
         clear_screen()

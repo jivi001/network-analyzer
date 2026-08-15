@@ -1,6 +1,6 @@
 name: "DNS Exfiltration Tunnel"
 description: "Detects high-entropy DNS subdomain queries"
-severity: CRITICAL
+severity: WARNING
 match:
   protocol: DNS
   condition: high_entropy_subdomain

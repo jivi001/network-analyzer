@@ -1,14 +1,3 @@
-import time
-from typing import List
-from storage.models import HostInfo, ScanResult
-from utils.constants import SCAN_TYPES
-
-try:
-    import nmap
-except ImportError:
-    nmap = None
-
-
 import ipaddress
 import re
 import time
@@ -56,7 +45,9 @@ class NetworkScanner:
                 ipaddress.ip_address(target)
             return target
         except ValueError:
-            pass
+            # If formatted like an IPv4 (4 numeric octets), do not fallback to hostname
+            if re.match(r"^\d+(\.\d+){3}$", target):
+                raise ValueError(f"Invalid IPv4 address: '{target}'")
 
         # Hostname validation (alphanumeric, dots, hyphens)
         if re.match(r"^[a-zA-Z0-9.\-]+$", target) and not target.startswith("-"):
@@ -70,11 +61,42 @@ class NetworkScanner:
             raise ValueError(f"Unknown scan profile: '{scan_type}'. Allowed profiles: {sorted(ALLOWED_SCAN_TYPES)}")
         return st
 
+    # Allowlist of safe Nmap flag prefixes for custom config args
+    _SAFE_ARG_PREFIXES = frozenset({
+        "-sS", "-sT", "-sU", "-sV", "-sP", "-sn", "-sA", "-sF", "-sN", "-sX",
+        "-O", "-A", "-6", "-T0", "-T1", "-T2", "-T3", "-T4", "-T5",
+        "--top-ports", "--host-timeout", "--max-retries", "--min-rate",
+        "--max-rate", "-p", "-Pn", "--open", "-v", "-vv",
+        "--version-intensity", "--osscan-limit", "--osscan-guess",
+    })
+
+    def _validate_scan_args(self, args: str) -> str:
+        """Validate custom Nmap arguments against a strict allowlist.
+
+        Raises ValueError for any flag that doesn't match known-safe prefixes.
+        This prevents shell injection, --script abuse, and output file writes.
+        """
+        import shlex
+        tokens = shlex.split(args)
+        for token in tokens:
+            if token.startswith("-"):
+                if not any(token == prefix or token.startswith(prefix + " ") or
+                           token.startswith(prefix + "=") or token == prefix
+                           for prefix in self._SAFE_ARG_PREFIXES):
+                    # Check for compound flags like -T2 which match -T2 exactly
+                    if not any(token.startswith(p) for p in self._SAFE_ARG_PREFIXES):
+                        raise ValueError(
+                            f"Nmap argument '{token}' is not in the safety allowlist. "
+                            f"Use built-in scan types or add the flag to _SAFE_ARG_PREFIXES."
+                        )
+            # Non-flag tokens (e.g., port numbers like "80,443") are fine
+        return args
+
     def _get_scan_args(self, scan_type: str) -> str:
         # Check config overrides first
         custom_arg = self.config.get(f"{scan_type}_scan") or self.config.get(scan_type)
         if custom_arg and isinstance(custom_arg, str):
-            args = custom_arg
+            args = self._validate_scan_args(custom_arg)
         else:
             scan_def = SCAN_TYPES.get(scan_type, SCAN_TYPES.get("top_ports", {}))
             args = scan_def.get("args", "-sS --top-ports 1000") if isinstance(scan_def, dict) else "-sS --top-ports 1000"

@@ -99,13 +99,7 @@ SCAN_TYPES = {
         "description": "Ping sweep - discover live hosts without port scanning (-sn)",
         "requires_admin": False,
         "cost": "Low / Fast",
-    },
-    "fast_discovery": {
-        "name": "Fast Discovery",
-        "args": "-sn -T4",
-        "description": "Accelerated ping sweep host discovery (-sn -T4)",
-        "requires_admin": False,
-        "cost": "Low / Very Fast",
+        "note": "Fast ping sweep to detect active hosts without probing ports.",
     },
     "top_ports": {
         "name": "TCP Top Ports",
@@ -113,6 +107,7 @@ SCAN_TYPES = {
         "description": "SYN scan top 1000 TCP ports (-sS)",
         "requires_admin": True,
         "cost": "Moderate / Fast",
+        "note": "Identifies the 1000 most commonly open TCP services via half-open SYN packets.",
     },
     "service": {
         "name": "Service Detection",
@@ -120,6 +115,7 @@ SCAN_TYPES = {
         "description": "SYN scan with service version identification (-sS -sV)",
         "requires_admin": True,
         "cost": "Moderate",
+        "note": "Probes open TCP ports to determine service names and application versions.",
     },
     "version": {
         "name": "Version Enumeration",
@@ -127,6 +123,7 @@ SCAN_TYPES = {
         "description": "Probe open ports for service version details (-sV)",
         "requires_admin": False,
         "cost": "Moderate",
+        "note": "Interrogates open ports with version probes without requiring raw SYN socket privileges.",
     },
     "os_detection": {
         "name": "OS Detection",
@@ -134,6 +131,7 @@ SCAN_TYPES = {
         "description": "TCP/IP stack fingerprinting for OS identification (-sS -O)",
         "requires_admin": True,
         "cost": "Moderate / Requires Admin",
+        "note": "Attempts OS identification via TCP/IP stack fingerprinting. Requires admin privileges.",
     },
     "comprehensive": {
         "name": "Comprehensive Scan",
@@ -141,26 +139,36 @@ SCAN_TYPES = {
         "description": "Combined SYN, version, and OS detection (-sS -sV -O)",
         "requires_admin": True,
         "cost": "High",
+        "note": "Broad multi-signal assessment combining port discovery, service versioning, and OS guessing.",
     },
     "udp_top": {
         "name": "UDP Top Ports",
         "args": "-sU --top-ports 100",
-        "description": "UDP scan top 100 ports (-sU). Can be slow due to rate limiting.",
+        "description": "UDP scan top 100 ports (-sU). Can be slow due to ICMP rate-limiting.",
         "requires_admin": True,
         "cost": "High / Slow",
-        "warning": "UDP scanning can take considerably longer than TCP scanning.",
+        "warning": "UDP scanning can take considerably longer than TCP scanning due to target ICMP rate-limiting.",
     },
     "tcp_connect": {
         "name": "TCP Connect Scan",
         "args": "-sT --top-ports 1000",
-        "description": "Full unprivileged TCP connect scan (-sT)",
+        "description": "Full unprivileged 3-way handshake TCP scan (-sT)",
         "requires_admin": False,
         "cost": "Moderate",
+        "note": "Establishes full TCP connections. Works without Administrator / root privileges.",
+    },
+    "fast_discovery": {
+        "name": "Fast Discovery",
+        "args": "-sn -T4",
+        "description": "Accelerated ping sweep host discovery (-sn -T4)",
+        "requires_admin": False,
+        "cost": "Low / Very Fast",
+        "note": "Aggressive timing ping sweep for rapid local subnet host enumeration.",
     },
     "aggressive": {
         "name": "Aggressive Assessment",
         "args": "-A --top-ports 1000",
-        "description": "OS, version, script, and traceroute (-A). High traffic volume.",
+        "description": "OS, version, default scripts, and traceroute (-A)",
         "requires_admin": True,
         "cost": "High / Loud",
         "warning": "Advanced scan — may generate significantly more traffic and take longer. Use only against authorized targets.",
@@ -171,19 +179,23 @@ SCAN_TYPES = {
         "description": "Ping sweep over IPv6 (-6 -sn)",
         "requires_admin": False,
         "cost": "Low / Fast",
+        "note": "Performs IPv6 neighbor and ping discovery for IPv6 targets.",
     },
     "stealth": {
         "name": "Stealth Scan",
         "args": "-sS -T2 --top-ports 100",
-        "description": "Slow, evasive SYN scan top 100 ports (-sS -T2)",
+        "description": "Slow, polite SYN scan top 100 ports (-sS -T2)",
         "requires_admin": True,
         "cost": "Slow / Low Traffic",
+        "note": "Paces SYN probes with T2 polite timing to minimize network load.",
     },
     # Backward compatibility aliases
     "quick": {
         "name": "Quick Discovery",
         "args": "-sn",
         "description": "Ping sweep - discover live hosts only",
+        "requires_admin": False,
+        "cost": "Low / Fast",
     },
     "port": {
         "name": "Port Scan",
@@ -202,7 +214,7 @@ SCAN_TYPES = {
 }
 
 # Default dashboard refresh interval (milliseconds)
-DASHBOARD_REFRESH_MS = 250
+DASHBOARD_REFRESH_MS = 100
 
 # Maximum packet buffer size for TUI display
 DEFAULT_PACKET_BUFFER_SIZE = 500
@@ -212,10 +224,10 @@ RATE_CALC_INTERVAL = 1.0
 
 # Application metadata
 APP_NAME = "my-sentinel"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 APP_BANNER = r"""
   ╔══════════════════════════════════════════════╗
-  ║         🛡️  my-sentinel v1.0.0               ║
+  ║         🛡️  my-sentinel v1.0.1               ║
   ║      Network Traffic Analyzer & Scanner      ║
   ╚══════════════════════════════════════════════╝
 """

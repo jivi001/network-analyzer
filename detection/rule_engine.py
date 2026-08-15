@@ -152,21 +152,36 @@ class RuleEngine:
             if packet.dst_port is None or packet.dst_port <= threshold:
                 return False
         elif condition == "high_entropy_subdomain":
-            if packet.protocol != "DNS" or not packet.dns_query:
+            if packet.protocol != "DNS" or not getattr(packet, "dns_query", None):
                 return False
-            subdomain = packet.dns_query.split(".")[0] if "." in packet.dns_query else packet.dns_query
+            query = str(packet.dns_query).strip().rstrip(".")
+            if not query:
+                return False
+            labels = [lbl for lbl in query.split(".") if lbl]
+            if not labels:
+                return False
+            candidate_labels = labels[:-1] if len(labels) >= 2 else labels
             try:
                 min_length = int(match.get("min_subdomain_length", 20))
                 threshold = float(match.get("entropy_threshold", 3.5))
             except (ValueError, TypeError):
                 min_length = 20
                 threshold = 3.5
-            if len(subdomain) <= min_length:
-                return False
-            entropy = shannon_entropy(subdomain)
-            packet.entropy = entropy
-            if entropy <= threshold:
-                return False
+
+            max_ent = 0.0
+            matched = False
+            for lbl in candidate_labels:
+                if len(lbl) > min_length:
+                    ent = shannon_entropy(lbl.lower())
+                    if ent > threshold:
+                        matched = True
+                        if ent > max_ent:
+                            max_ent = ent
+
+            if matched:
+                packet.entropy = round(max_ent, 2)
+                return True
+            return False
         elif condition == "mac_change":
             if packet.protocol != "ARP" or not packet.old_mac or not packet.new_mac:
                 return False

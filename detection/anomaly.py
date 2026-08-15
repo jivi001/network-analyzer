@@ -11,12 +11,14 @@ from storage.models import PacketInfo, AlertInfo
 
 def shannon_entropy(value: str) -> float:
     """Calculate Shannon entropy in bits per character."""
-    if not value:
+    if not value or not isinstance(value, str):
         return 0.0
-
-    counts = {char: value.count(char) for char in set(value)}
     length = len(value)
-    return -sum((count / length) * math.log(count / length, 2) for count in counts.values())
+    if length <= 1:
+        return 0.0
+    counts = {char: value.count(char) for char in set(value)}
+    ent = -sum((count / length) * math.log2(count / length) for count in counts.values())
+    return max(0.0, ent)
 
 
 class AnomalyDetector:
@@ -37,14 +39,18 @@ class AnomalyDetector:
         self.beacon_state: dict[tuple[str, str], list[float]] = defaultdict(list)
         self.max_beacon_pairs = max_beacon_pairs
 
+        # DNS Exfiltration state: (src_ip, parent_domain) -> {'count': int, 'window_start': float, 'labels': set}
+        self.dns_exfil_state: dict[tuple[str, str], dict] = {}
+
     def reset(self):
         """Clear all state."""
         with self.lock:
             self.scan_state.clear()
             self.beacon_state.clear()
+            self.dns_exfil_state.clear()
 
     def _prune_state_if_needed(self, current_ts: float):
-        """Evict expired or excess hosts and beacon pairs under lock."""
+        """Evict expired or excess hosts, beacon pairs, and DNS exfil state under lock."""
         if len(self.scan_state) >= self.max_hosts:
             expired = [
                 ip for ip, data in self.scan_state.items()
@@ -53,7 +59,6 @@ class AnomalyDetector:
             for ip in expired:
                 del self.scan_state[ip]
             if len(self.scan_state) >= self.max_hosts:
-                # Remove oldest window_start entries to keep size strictly within max_hosts - 1 before new insert
                 sorted_ips = sorted(
                     self.scan_state.keys(),
                     key=lambda ip: self.scan_state[ip]["window_start"]
@@ -62,7 +67,6 @@ class AnomalyDetector:
                     del self.scan_state[ip]
 
         if len(self.beacon_state) >= self.max_beacon_pairs:
-            # Remove pairs with oldest latest timestamp
             sorted_pairs = sorted(
                 self.beacon_state.keys(),
                 key=lambda k: self.beacon_state[k][-1] if self.beacon_state[k] else 0
@@ -70,24 +74,100 @@ class AnomalyDetector:
             for k in sorted_pairs[: len(self.beacon_state) - self.max_beacon_pairs + 1]:
                 del self.beacon_state[k]
 
+        # Prune DNS exfil state
+        if len(self.dns_exfil_state) >= self.max_hosts:
+            expired_dns = [
+                k for k, v in self.dns_exfil_state.items()
+                if current_ts - v.get("window_start", 0) > 60.0
+            ]
+            for k in expired_dns:
+                del self.dns_exfil_state[k]
+            if len(self.dns_exfil_state) >= self.max_hosts:
+                sorted_dns = sorted(
+                    self.dns_exfil_state.keys(),
+                    key=lambda k: self.dns_exfil_state[k].get("window_start", 0)
+                )
+                for k in sorted_dns[: len(self.dns_exfil_state) - self.max_hosts + 1]:
+                    del self.dns_exfil_state[k]
+
     def check_dns_exfiltration(self, packet: PacketInfo) -> Optional[AlertInfo]:
-        """Entropy-based DNS tunnel detection."""
-        if packet.protocol != "DNS" or not packet.dns_query:
+        """Multi-signal entropy & volume based DNS tunnel detection.
+
+        Severity escalation:
+          - 1 suspicious query         -> WARNING  (single signal, could be UUID/CDN)
+          - 2 unique high-ent labels    -> HIGH     (repeated suspicious activity)
+          - 3+ unique or 5+ total       -> CRITICAL (sustained exfiltration tunnel)
+        """
+        if packet.protocol != "DNS" or not getattr(packet, "dns_query", None):
             return None
 
-        query = packet.dns_query
-        subdomain = query.split(".")[0] if "." in query else query
-
-        if len(subdomain) <= 20:
+        query = str(packet.dns_query).strip()
+        if not query:
             return None
 
-        entropy = shannon_entropy(subdomain)
+        clean_q = query.rstrip(".")
+        labels = [lbl for lbl in clean_q.split(".") if lbl]
+        if not labels:
+            return None
 
-        if entropy > 3.5:
+        # Inspect all subdomain labels (exclude TLD/registered domain)
+        candidate_labels = labels[:-1] if len(labels) >= 2 else labels
+
+        suspicious_candidates = []
+        for lbl in candidate_labels:
+            if len(lbl) > 20:
+                ent = shannon_entropy(lbl.lower())
+                if ent > 3.5:
+                    suspicious_candidates.append((lbl, ent))
+
+        if not suspicious_candidates:
+            return None
+
+        best_label, max_ent = max(suspicious_candidates, key=lambda x: x[1])
+        packet.entropy = round(max_ent, 2)
+
+        ts = packet.timestamp if isinstance(packet.timestamp, (int, float)) and packet.timestamp > 0 else time.time()
+        parent_domain = ".".join(labels[-2:]) if len(labels) >= 2 else labels[-1]
+
+        with self.lock:
+            self._prune_state_if_needed(ts)
+            state_key = (packet.src_ip or "unknown", parent_domain.lower())
+
+            if state_key not in self.dns_exfil_state:
+                self.dns_exfil_state[state_key] = {
+                    "count": 0,
+                    "window_start": ts,
+                    "labels": set(),
+                }
+
+            dstate = self.dns_exfil_state[state_key]
+            if ts - dstate["window_start"] > 60.0:
+                dstate["count"] = 0
+                dstate["window_start"] = ts
+                dstate["labels"].clear()
+
+            dstate["count"] += 1
+            if len(dstate["labels"]) < 100:
+                dstate["labels"].add(best_label.lower())
+
+            unique_count = len(dstate["labels"])
+            total_count = dstate["count"]
+
+            # Severity escalation based on multi-signal correlation
+            if unique_count >= 3 or total_count >= 5:
+                severity = "CRITICAL"
+                message = f"DNS Exfiltration Tunnel: {query} (entropy={max_ent:.2f}, unique_labels={unique_count}, queries={total_count})"
+            elif unique_count >= 2:
+                severity = "HIGH"
+                message = f"DNS Exfiltration (repeated): {query} (entropy={max_ent:.2f}, unique_labels={unique_count})"
+            else:
+                severity = "WARNING"
+                message = f"Suspicious DNS query: {query} (entropy={max_ent:.2f}, single signal)"
+
             return AlertInfo(
                 rule_name="DNS Exfiltration Tunnel",
-                severity="CRITICAL",
-                message=f"DNS Exfiltration: {query} (entropy={entropy:.2f})",
+                severity=severity,
+                message=message,
                 src_ip=packet.src_ip,
                 dst_ip=packet.dst_ip,
                 dst_port=packet.dst_port,
@@ -95,7 +175,6 @@ class AnomalyDetector:
                 timestamp=packet.timestamp,
                 timestamp_str=packet.timestamp_str,
             )
-        return None
 
     def check_beaconing(self, packet: PacketInfo) -> Optional[AlertInfo]:
         """Detect C2 beaconing patterns."""
@@ -146,7 +225,6 @@ class AnomalyDetector:
             return None
 
         ts = packet.timestamp or time.time()
-
         with self.lock:
             self._prune_state_if_needed(ts)
             state = self.scan_state[packet.src_ip]

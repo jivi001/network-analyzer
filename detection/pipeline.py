@@ -33,6 +33,13 @@ class PacketDetectionPipeline:
         try:
             dns_alert = self.anomaly_detector.check_dns_exfiltration(packet)
             if dns_alert:
+                # If both RuleEngine and AnomalyDetector fired for the same
+                # rule_name, keep the AnomalyDetector's alert (it has stateful
+                # severity escalation) and remove the RuleEngine's static one.
+                alerts = [
+                    a for a in alerts
+                    if a.rule_name != dns_alert.rule_name
+                ]
                 alerts.append(dns_alert)
         except Exception as e:
             logger.error(f"DNS exfiltration check error: {e}")
