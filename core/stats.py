@@ -1,12 +1,55 @@
+import os
+import sys
 import threading
 import time
 from collections import Counter
-from typing import Dict, List, Set, Any, Optional
+from typing import Dict, List, Set, Any, Optional, Tuple
 from storage.models import PacketInfo, StatsSnapshot
 
 
+def _sample_process_memory_mb() -> float:
+    """Lightweight sampled resident memory in MB across Windows and Unix."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            counters = PROCESS_MEMORY_COUNTERS()
+            counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+            handle = ctypes.windll.kernel32.GetCurrentProcess()
+            fn = getattr(ctypes.windll.kernel32, "K32GetProcessMemoryInfo", None) or getattr(
+                ctypes.windll.psapi, "GetProcessMemoryInfo", None
+            )
+            if fn:
+                fn.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESS_MEMORY_COUNTERS), wintypes.DWORD]
+                fn.restype = wintypes.BOOL
+                if fn(handle, ctypes.byref(counters), counters.cb):
+                    return counters.WorkingSetSize / (1024 * 1024)
+        else:
+            import resource
+            usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            return (usage / 1024.0) if sys.platform == "darwin" else (usage / 1024.0)
+    except Exception:
+        pass
+    return 0.0
+
+
 class StatsAggregator:
-    """Thread-safe Statistics Aggregator."""
+    """Thread-safe Statistics and System Telemetry Aggregator."""
 
     def __init__(self):
         self.lock = threading.RLock()
@@ -15,6 +58,7 @@ class StatsAggregator:
         self.protocol_counts: Counter = Counter()
         self.ip_packets: Counter = Counter()
         self.ip_bytes: Counter = Counter()
+        self.conversations: Counter = Counter()
         self.unique_src_ips: Set[str] = set()
         self.unique_dst_ips: Set[str] = set()
         self.unique_hosts: Set[str] = set()
@@ -25,6 +69,13 @@ class StatsAggregator:
         self._last_bytes: int = 0
         self._last_time: float = time.time()
         self._start_time: float = time.time()
+
+        # Sampled system telemetry
+        self.cpu_percent: float = 0.0
+        self.memory_mb: float = 0.0
+        self.thread_count: int = 1
+        self._last_cpu_time: float = time.process_time()
+        self._last_wall_time: float = time.time()
 
         self.rate_thread: Optional[threading.Thread] = None
         self._running = threading.Event()
@@ -48,6 +99,11 @@ class StatsAggregator:
                 self.unique_dst_ips.add(packet.dst_ip)
                 self.unique_hosts.add(packet.dst_ip)
 
+            if packet.src_ip and packet.dst_ip:
+                # Canonical pair
+                pair = tuple(sorted([packet.src_ip, packet.dst_ip]))
+                self.conversations[pair] += 1
+
     def get_snapshot(self) -> StatsSnapshot:
         """Returns a snapshot of the current statistics without long-held locks."""
         with self.lock:
@@ -64,6 +120,13 @@ class StatsAggregator:
                 {"ip": ip, "bytes": b, "packets": self.ip_packets[ip]}
                 for ip, b in top_raw
             ]
+            top_convs = [
+                {"src": pair[0], "dst": pair[1], "packets": count}
+                for pair, count in self.conversations.most_common(5)
+            ]
+            cpu_val = self.cpu_percent
+            mem_val = self.memory_mb
+            thr_val = self.thread_count
 
         # Heavy / derived calculations done outside lock
         elapsed = time.time() - self._start_time
@@ -85,7 +148,12 @@ class StatsAggregator:
             protocol_counts=proto_counts,
             protocol_percentages=proto_pcts,
             top_talkers=top_talkers,
+            top_conversations=top_convs,
             elapsed_seconds=elapsed,
+            processing_pps=pps,
+            cpu_percent=cpu_val,
+            memory_mb=mem_val,
+            thread_count=thr_val,
         )
 
     def reset(self):
@@ -96,6 +164,7 @@ class StatsAggregator:
             self.protocol_counts.clear()
             self.ip_packets.clear()
             self.ip_bytes.clear()
+            self.conversations.clear()
             self.unique_src_ips.clear()
             self.unique_dst_ips.clear()
             self.unique_hosts.clear()
@@ -135,6 +204,8 @@ class StatsAggregator:
         self._last_time = time.time()
         self._last_packets = self.total_packets
         self._last_bytes = self.total_bytes
+        self._last_cpu_time = time.process_time()
+        self._last_wall_time = time.time()
         self.rate_thread = threading.Thread(target=self._calc_loop, daemon=True)
         self.rate_thread.start()
 
@@ -153,7 +224,7 @@ class StatsAggregator:
                 if elapsed > 0:
                     current_pps = (self.total_packets - self._last_packets) / elapsed
                     current_bps = (self.total_bytes - self._last_bytes) / elapsed
-                    
+
                     # Smooth rate using Exponential Moving Average (alpha=0.5)
                     self.packets_per_sec = (self.packets_per_sec * 0.5) + (current_pps * 0.5)
                     self.bytes_per_sec = (self.bytes_per_sec * 0.5) + (current_bps * 0.5)
@@ -161,3 +232,16 @@ class StatsAggregator:
                 self._last_packets = self.total_packets
                 self._last_bytes = self.total_bytes
                 self._last_time = current_time
+
+                # Sample CPU % and Memory
+                now_cpu = time.process_time()
+                now_wall = time.time()
+                dt_wall = now_wall - self._last_wall_time
+                dt_cpu = now_cpu - self._last_cpu_time
+                if dt_wall > 0:
+                    self.cpu_percent = min(100.0, max(0.0, (dt_cpu / dt_wall) * 100.0))
+                self._last_wall_time = now_wall
+                self._last_cpu_time = now_cpu
+
+                self.memory_mb = _sample_process_memory_mb()
+                self.thread_count = threading.active_count()

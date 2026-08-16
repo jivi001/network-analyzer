@@ -719,6 +719,7 @@ def run_pcap_analysis(config: dict, db: Database, privacy: PrivacyFilter):
     except Exception as e:
         from rich.markup import escape
         console.print(f"[bold red]Error loading PCAP:[/bold red] {escape(str(e))}")
+        Prompt.ask("Press Enter to return to main menu", default="", console=console)
         return
 
     if not packets:
@@ -758,6 +759,31 @@ def run_pcap_analysis(config: dict, db: Database, privacy: PrivacyFilter):
 
     # Display results
     display_pcap_analysis(packets, stats_snapshot, alert_manager.get_all())
+    console.print()
+
+    # Offer export
+    if packets and Confirm.ask("Export analysis report?", default=False, console=console):
+        export_settings = prompt_export_settings()
+        if export_settings:
+            exporter = Exporter()
+            export_dir = config.get("export_directory", "exports")
+            fmt = export_settings.get("format", "csv").lower()
+            default_fn = exporter.generate_filename("pcap_analysis", fmt)
+            user_fn = export_settings.get("filename", "").strip() or default_fn
+
+            try:
+                out_path = exporter.validate_export_path(user_fn, export_dir)
+                if fmt == "csv":
+                    exporter.export_csv(out_path, packets=packets, stats=stats_snapshot)
+                elif fmt == "json":
+                    exporter.export_json(out_path, alerts=alert_manager.get_all(), stats=stats_snapshot, packets=packets)
+                elif fmt == "pcap":
+                    exporter.export_pcap(out_path, packets)
+                console.print(f"[green]Report exported to:[/green] {out_path}")
+            except Exception as e:
+                from rich.markup import escape
+                console.print(f"[bold red]Export failed:[/bold red] {escape(str(e))}")
+
     console.print()
     Prompt.ask("Press Enter to return to main menu", default="", console=console)
 

@@ -267,31 +267,36 @@ class LiveDashboard:
                 Panel(Align.center(Text("No security alerts detected", style="dim green")), title=alerts_title, border_style="green")
             )
 
-        # Calculate Queue Utilization and System Health
+        # Calculate Queue Utilization, Backlog, and System Health
         queue_util = (queue_depth / queue_capacity * 100) if queue_capacity > 0 else 0
         total_lost = dropped_count + processing_errors
         total_received = captured_count if captured_count > 0 else (stats.total_packets + total_lost)
         drop_rate = (total_lost / total_received * 100) if total_received > 0 else 0
+        backlog_delta = max(0, captured_count - processed_count)
+        proc_pps = stats.processing_pps
+
+        # Detect sustained capture backlog
+        is_backlog = (captured_pps > proc_pps * 1.25 and queue_depth > 100) if (captured_pps > 10 and proc_pps > 0) else False
 
         if drop_rate > 10 or queue_util > 90:
             health_str = "[bold red]CRITICAL[/bold red]"
+        elif is_backlog:
+            health_str = "[bold yellow]BACKLOG[/bold yellow]"
         elif drop_rate > 1 or queue_util > 70 or degraded_subsystems or pcap_errors > 0 or db_errors > 0:
             health_str = "[bold yellow]DEGRADED[/bold yellow]"
         else:
             health_str = "[bold green]HEALTHY[/bold green]"
 
-        # Footer Bar with honest metrics breakdown
+        # Footer Bar with honest metrics breakdown and system telemetry
         drop_style = "bold red" if dropped_count > 0 else "bold white"
-        rate_val = captured_pps if captured_pps > 0 else stats.packets_per_sec
         footer_text = (
-            f"Cap: [bold]{captured_count:,}[/bold] | "
-            f"Proc: [bold]{processed_count:,}[/bold] | "
-            f"Dropped: [{drop_style}]{dropped_count:,}[/{drop_style}] | "
-            f"Queue: [bold]{queue_depth:,}/{queue_capacity:,}[/bold] ({queue_util:.1f}%) | "
-            f"Health: {health_str} | "
-            f"Rate: [bold]{rate_val:.1f} pps[/bold] | "
-            f"Bytes: [bold]{format_bytes(stats.total_bytes)}[/bold] | "
-            f"Lat: [bold]{avg_latency_ms:.1f}ms[/bold]"
+            f"Cap: [bold]{captured_count:,}[/bold] ({captured_pps:.1f}/s) | "
+            f"Proc: [bold]{processed_count:,}[/bold] ({proc_pps:.1f}/s) | "
+            f"Drop: [{drop_style}]{dropped_count:,}[/{drop_style}] | "
+            f"Queue: [bold]{queue_depth:,}/{queue_capacity:,}[/bold] | "
+            f"CPU: [bold]{stats.cpu_percent:.0f}%[/bold] | "
+            f"RAM: [bold]{stats.memory_mb:.1f}MB[/bold] | "
+            f"Health: {health_str}"
         )
         self.layout["footer"].update(
             Panel(Text.from_markup(footer_text), style="black on green")

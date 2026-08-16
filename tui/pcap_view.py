@@ -26,12 +26,14 @@ def display_pcap_analysis(
     screen_manager.set_state(ScreenState.TASK_COMPLETE)
 
     # Summary panel
+    rate_str = f"{stats.packets_per_sec:.1f} pps ({format_bytes(stats.bytes_per_sec)}/s)" if stats.elapsed_seconds > 0 else f"{stats.total_packets:,} pkts"
     summary_text = (
         f"Total Packets: [bold cyan]{stats.total_packets:,}[/bold cyan]\n"
         f"Total Bytes: [bold cyan]{format_bytes(stats.total_bytes)}[/bold cyan]\n"
+        f"Capture Rate: [bold yellow]{rate_str}[/bold yellow]\n"
         f"Average Packet Size: [bold yellow]{stats.avg_packet_size:.1f} B[/bold yellow]\n"
         f"Unique Hosts: [bold green]{stats.unique_hosts_total}[/bold green]\n"
-        f"Captured Duration: [bold white]{format_elapsed(stats.elapsed_seconds)}[/bold white]"
+        f"Forensic Duration: [bold white]{format_elapsed(stats.elapsed_seconds)}[/bold white]"
     )
     console.print(
         Panel(
@@ -61,6 +63,21 @@ def display_pcap_analysis(
                 build_bar(count, stats.total_packets, 25),
             )
     console.print(Panel(proto_table, title="Protocol Breakdown"))
+
+    # Top Conversations table
+    if getattr(stats, "top_conversations", None):
+        conv_table = Table(show_header=True, header_style="bold cyan", expand=True)
+        conv_table.add_column("Endpoint A")
+        conv_table.add_column("Endpoint B")
+        conv_table.add_column("Packets", justify="right")
+
+        for conv in stats.top_conversations:
+            conv_table.add_row(
+                conv["src"],
+                conv["dst"],
+                f"{conv['packets']:,}",
+            )
+        console.print(Panel(conv_table, title="Top Network Conversations"))
 
     # Top Talkers table
     if stats.top_talkers:

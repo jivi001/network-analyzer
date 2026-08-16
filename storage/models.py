@@ -116,7 +116,7 @@ class ScanResult:
 
 @dataclass
 class StatsSnapshot:
-    """A point-in-time snapshot of capture statistics."""
+    """A point-in-time snapshot of capture and system performance statistics."""
 
     total_packets: int = 0
     total_bytes: int = 0
@@ -131,6 +131,16 @@ class StatsSnapshot:
     top_talkers: list = field(default_factory=list)  # list of dicts [{'ip': ..., 'bytes': ..., 'packets': ...}]
     elapsed_seconds: float = 0.0
     alert_count: int = 0
+
+    # System & Pipeline Performance Telemetry
+    capture_pps: float = 0.0
+    processing_pps: float = 0.0
+    backlog_delta: int = 0
+    cpu_percent: float = 0.0
+    memory_mb: float = 0.0
+    thread_count: int = 0
+    alerts_per_sec: float = 0.0
+    top_conversations: list = field(default_factory=list)
 
 
 @dataclass

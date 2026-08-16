@@ -160,16 +160,103 @@ def prompt_scan_settings() -> Optional[Dict[str, str]]:
             console.print("[dim]Examples: 192.168.1.0/24, 10.0.0.1, fe80::1, scanme.nmap.org[/dim]")
 
 
+from utils.path_helpers import (
+    clean_pcap_path_input,
+    resolve_pcap_path,
+    find_similar_pcap,
+    get_available_pcaps_in_dir,
+)
+from pathlib import Path
+
+
 def prompt_pcap_path() -> str:
-    """Ask for PCAP file path with validation under TASK_CONFIG screen state."""
+    """
+    Interactive PCAP file path prompt under TASK_CONFIG screen state.
+    Features:
+    - Preserves absolute Windows paths, drive letters, backslashes, and quotes.
+    - Handles relative paths (e.g. exports/test1.pcap).
+    - Intelligent 'Did you mean?' typo suggestions and confirmation.
+    - Numbered quick-selection for existing PCAPs in export/current directories.
+    - Graceful empty-input and cancellation handling.
+    """
     screen_manager.set_state(ScreenState.TASK_CONFIG)
-    console.print("[bold cyan]Analyze PCAP File[/bold cyan]")
+    console.print("[bold cyan]📂 Analyze PCAP File[/bold cyan]")
     console.print()
+
+    # Discover available PCAPs in exports or current working directory for quick-select
+    cwd = Path.cwd()
+    search_dirs = [cwd / "exports", cwd]
+    available_pcaps = []
+    seen_paths = set()
+    for d in search_dirs:
+        for p in get_available_pcaps_in_dir(d, limit=6):
+            if p.resolve() not in seen_paths:
+                seen_paths.add(p.resolve())
+                available_pcaps.append(p)
+
+    if available_pcaps:
+        console.print("[bold green]Available PCAP captures:[/bold green]")
+        for idx, pcap_path in enumerate(available_pcaps[:5], 1):
+            size_kb = pcap_path.stat().st_size / 1024.0 if pcap_path.exists() else 0
+            rel_str = str(pcap_path.relative_to(cwd)) if pcap_path.is_relative_to(cwd) else str(pcap_path)
+            console.print(f"  [{idx}] {rel_str} [dim]({size_kb:.1f} KB)[/dim]")
+        console.print()
+
     while True:
-        filepath = Prompt.ask("Path to PCAP file", console=console)
-        if os.path.exists(filepath):
-            return filepath
-        console.print(f"[red]Error: File '{filepath}' not found.[/red]")
+        raw_input = Prompt.ask(
+            "Enter PCAP file path or selection number (or '[bold]q[/bold]' to cancel)",
+            default="",
+            console=console,
+        )
+
+        if not raw_input.strip():
+            console.print("[dim yellow]Please enter a PCAP file path or select a number from above.[/dim yellow]")
+            continue
+
+        if raw_input.strip().lower() in ("q", "quit", "exit", "cancel"):
+            return ""
+
+        # Check for numeric shortcut selection
+        if raw_input.strip().isdigit():
+            choice_num = int(raw_input.strip())
+            if 1 <= choice_num <= len(available_pcaps):
+                selected = available_pcaps[choice_num - 1]
+                if selected.is_file():
+                    return str(selected.resolve())
+
+        # Resolve and validate path
+        target_path = resolve_pcap_path(raw_input)
+        if not target_path:
+            console.print("[red]Invalid path format.[/red]")
+            continue
+
+        if target_path.is_file():
+            return str(target_path.resolve())
+
+        if target_path.is_dir():
+            console.print(f"[bold red]Error:[/bold red] '{target_path}' is a directory, not a file.")
+            dir_pcaps = get_available_pcaps_in_dir(target_path, limit=5)
+            if dir_pcaps:
+                console.print(f"[yellow]PCAP files in this directory:[/yellow]")
+                for p in dir_pcaps:
+                    console.print(f"  • {p.name}")
+            continue
+
+        # File does not exist — provide intelligent 'Did you mean?' suggestion
+        console.print()
+        console.print(f"[bold red]PCAP file not found:[/bold red]")
+        console.print(f"  {target_path}")
+
+        suggested = find_similar_pcap(target_path, cutoff=0.45)
+        if suggested and suggested.is_file():
+            console.print()
+            console.print(f"[bold yellow]Possible matching file:[/bold yellow]")
+            console.print(f"  [cyan]{suggested.resolve()}[/cyan]")
+            console.print()
+            if Confirm.ask("Did you mean this file?", default=True, console=console):
+                return str(suggested.resolve())
+
+        console.print()
 
 
 def prompt_export_settings() -> Dict[str, str]:

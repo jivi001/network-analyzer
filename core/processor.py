@@ -2,6 +2,10 @@ import time
 from datetime import datetime
 from typing import Optional
 from scapy.all import Ether, IP, TCP, UDP, ICMP, ARP, DNS, DNSQR
+try:
+    from scapy.all import IPv6
+except ImportError:
+    IPv6 = None
 from storage.models import PacketInfo
 from utils.constants import resolve_service, TCP_FLAGS
 
@@ -9,6 +13,7 @@ from utils.constants import resolve_service, TCP_FLAGS
 def process_packet(raw_packet, packet_id: int) -> Optional[PacketInfo]:
     """
     Decodes a raw Scapy packet into a PacketInfo dataclass.
+    Supports IPv4, IPv6, ARP, TCP, UDP, ICMP, DNS, and diverse link-layer types.
 
     Args:
         raw_packet: The Scapy packet.
@@ -60,55 +65,75 @@ def process_packet(raw_packet, packet_id: int) -> Optional[PacketInfo]:
         dst_ip = arp.pdst
         src_mac = arp.hwsrc if hasattr(arp, "hwsrc") else src_mac
         dst_mac = arp.hwdst if hasattr(arp, "hwdst") else dst_mac
+
     elif raw_packet.haslayer(IP):
         ip_layer = raw_packet[IP]
         src_ip = ip_layer.src
         dst_ip = ip_layer.dst
         ttl = ip_layer.ttl
 
-        if raw_packet.haslayer(TCP):
-            protocol = "TCP"
-            tcp = raw_packet[TCP]
-            src_port = tcp.sport
-            dst_port = tcp.dport
-            service = resolve_service(src_port, dst_port)
-            flags_raw = str(tcp.flags)
-            flags_list = [TCP_FLAGS[c] for c in flags_raw if c in TCP_FLAGS]
-            flag_str = ",".join(flags_list) if flags_list else "NONE"
-            info = f"{src_port} > {dst_port} [{flag_str}] Seq={tcp.seq} Ack={tcp.ack} Win={tcp.window} Len={len(tcp.payload)}"
+    elif IPv6 and raw_packet.haslayer(IPv6):
+        ipv6_layer = raw_packet[IPv6]
+        src_ip = ipv6_layer.src
+        dst_ip = ipv6_layer.dst
+        ttl = ipv6_layer.hlim
 
-        elif raw_packet.haslayer(UDP):
-            protocol = "UDP"
-            udp = raw_packet[UDP]
-            src_port = udp.sport
-            dst_port = udp.dport
-            service = resolve_service(src_port, dst_port)
+    # Decode Transport & Application Layers
+    if raw_packet.haslayer(TCP):
+        protocol = "TCP"
+        tcp = raw_packet[TCP]
+        src_port = tcp.sport
+        dst_port = tcp.dport
+        service = resolve_service(src_port, dst_port)
+        flags_raw = str(tcp.flags)
+        flags_list = [TCP_FLAGS[c] for c in flags_raw if c in TCP_FLAGS]
+        flag_str = ",".join(flags_list) if flags_list else "NONE"
+        payload_len = len(tcp.payload) if hasattr(tcp, "payload") else 0
+        info = f"{src_port} > {dst_port} [{flag_str}] Seq={tcp.seq} Ack={tcp.ack} Win={tcp.window} Len={payload_len}"
 
-            if raw_packet.haslayer(DNS):
-                protocol = "DNS"
-                if raw_packet.haslayer(DNSQR):
-                    dns_qr = raw_packet[DNSQR]
-                    if dns_qr.qname:
-                        dns_query = (
-                            dns_qr.qname.decode("utf-8", errors="ignore").rstrip(".")
-                            if isinstance(dns_qr.qname, bytes)
-                            else str(dns_qr.qname).rstrip(".")
-                        )
-                    dns_type = str(dns_qr.qtype)
-                    info = f"DNS Query: {dns_query}"
-                else:
-                    info = f"DNS Response ({src_port} > {dst_port})"
+    elif raw_packet.haslayer(UDP):
+        protocol = "UDP"
+        udp = raw_packet[UDP]
+        src_port = udp.sport
+        dst_port = udp.dport
+        service = resolve_service(src_port, dst_port)
+
+        if raw_packet.haslayer(DNS):
+            protocol = "DNS"
+            if raw_packet.haslayer(DNSQR):
+                dns_qr = raw_packet[DNSQR]
+                if dns_qr.qname:
+                    dns_query = (
+                        dns_qr.qname.decode("utf-8", errors="ignore").rstrip(".")
+                        if isinstance(dns_qr.qname, bytes)
+                        else str(dns_qr.qname).rstrip(".")
+                    )
+                dns_type = str(dns_qr.qtype)
+                info = f"DNS Query: {dns_query}"
             else:
-                info = f"{src_port} > {dst_port} Len={udp.len}"
-
-        elif raw_packet.haslayer(ICMP):
-            protocol = "ICMP"
-            icmp = raw_packet[ICMP]
-            service = "Ping / Control"
-            info = f"ICMP Type={icmp.type} Code={icmp.code}"
+                info = f"DNS Response ({src_port} > {dst_port})"
         else:
-            protocol = "IP"
-            info = f"IP Protocol {ip_layer.proto}"
+            udp_len = udp.len if hasattr(udp, "len") else len(udp.payload)
+            info = f"{src_port} > {dst_port} Len={udp_len}"
+
+    elif raw_packet.haslayer(ICMP):
+        protocol = "ICMP"
+        icmp = raw_packet[ICMP]
+        service = "Ping / Control"
+        info = f"ICMP Type={icmp.type} Code={icmp.code}"
+
+    elif any(layer_cls.__name__.startswith("ICMPv6") for layer_cls in getattr(raw_packet, "layers", lambda: [])()):
+        protocol = "ICMP"
+        service = "ICMPv6 / ND"
+        info = "ICMPv6 Control / Neighbor Discovery"
+
+    elif raw_packet.haslayer(IP):
+        protocol = "IP"
+        info = f"IP Protocol {raw_packet[IP].proto}"
+
+    elif IPv6 and raw_packet.haslayer(IPv6):
+        protocol = "IPv6"
+        info = f"IPv6 NextHeader {raw_packet[IPv6].nh}"
 
     return PacketInfo(
         id=packet_id,
