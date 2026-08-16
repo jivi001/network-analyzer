@@ -164,6 +164,7 @@ from utils.path_helpers import (
     clean_pcap_path_input,
     resolve_pcap_path,
     find_similar_pcap,
+    find_similar_pcaps,
     get_available_pcaps_in_dir,
 )
 from pathlib import Path
@@ -175,7 +176,7 @@ def prompt_pcap_path() -> str:
     Features:
     - Preserves absolute Windows paths, drive letters, backslashes, and quotes.
     - Handles relative paths (e.g. exports/test1.pcap).
-    - Intelligent 'Did you mean?' typo suggestions and confirmation.
+    - Numbered suggestions for typos with 'Enter selection [1], a new path, or 'q' to cancel'.
     - Numbered quick-selection for existing PCAPs in export/current directories.
     - Graceful empty-input and cancellation handling.
     """
@@ -222,6 +223,7 @@ def prompt_pcap_path() -> str:
             if 1 <= choice_num <= len(available_pcaps):
                 selected = available_pcaps[choice_num - 1]
                 if selected.is_file():
+                    console.print(f"\n[green]Loading:[/green]\n  {selected.resolve()}\n")
                     return str(selected.resolve())
 
         # Resolve and validate path
@@ -231,6 +233,7 @@ def prompt_pcap_path() -> str:
             continue
 
         if target_path.is_file():
+            console.print(f"\n[green]Loading:[/green]\n  {target_path.resolve()}\n")
             return str(target_path.resolve())
 
         if target_path.is_dir():
@@ -242,20 +245,75 @@ def prompt_pcap_path() -> str:
                     console.print(f"  • {p.name}")
             continue
 
-        # File does not exist — provide intelligent 'Did you mean?' suggestion
+        # File does not exist — provide numbered 'Did you mean?' suggestions
         console.print()
         console.print(f"[bold red]PCAP file not found:[/bold red]")
-        console.print(f"  {target_path}")
+        console.print(f"   {target_path}")
 
-        suggested = find_similar_pcap(target_path, cutoff=0.45)
-        if suggested and suggested.is_file():
+        suggestions = find_similar_pcaps(target_path, cutoff=0.45, max_suggestions=5)
+        if suggestions:
             console.print()
-            console.print(f"[bold yellow]Possible matching file:[/bold yellow]")
-            console.print(f"  [cyan]{suggested.resolve()}[/cyan]")
+            console.print(f"[bold yellow]Possible matching files:[/bold yellow]")
             console.print()
-            if Confirm.ask("Did you mean this file?", default=True, console=console):
-                return str(suggested.resolve())
+            for s_idx, s_path in enumerate(suggestions, 1):
+                console.print(f"  [{s_idx}] [cyan]{s_path.resolve()}[/cyan]")
+            console.print()
 
+            while True:
+                sub_choice = Prompt.ask(
+                    f"Enter selection [[bold]1[/bold]], a new path, or '[bold]q[/bold]' to cancel",
+                    default="1",
+                    console=console,
+                ).strip()
+
+                if not sub_choice:
+                    sub_choice = "1"
+
+                if sub_choice.lower() in ("q", "quit", "exit", "cancel"):
+                    return ""
+
+                if sub_choice.isdigit():
+                    s_num = int(sub_choice)
+                    if 1 <= s_num <= len(suggestions):
+                        chosen = suggestions[s_num - 1]
+                        if chosen.is_file():
+                            console.print(f"\n[green]Loading:[/green]\n  {chosen.resolve()}\n")
+                            return str(chosen.resolve())
+                    console.print(f"[bold red]Invalid selection.[/bold red] Enter a listed number (1-{len(suggestions)}), a valid PCAP path, or 'q'.")
+                    continue
+
+                # If user entered a new path string
+                new_target = resolve_pcap_path(sub_choice)
+                if new_target and new_target.is_file():
+                    console.print(f"\n[green]Loading:[/green]\n  {new_target.resolve()}\n")
+                    return str(new_target.resolve())
+                elif new_target and not new_target.exists():
+                    new_suggestions = find_similar_pcaps(new_target, cutoff=0.45, max_suggestions=5)
+                    if new_suggestions:
+                        target_path = new_target
+                        suggestions = new_suggestions
+                        console.print()
+                        console.print(f"[bold red]PCAP file not found:[/bold red]")
+                        console.print(f"   {target_path}")
+                        console.print()
+                        console.print(f"[bold yellow]Possible matching files:[/bold yellow]")
+                        console.print()
+                        for s_idx, s_path in enumerate(suggestions, 1):
+                            console.print(f"  [{s_idx}] [cyan]{s_path.resolve()}[/cyan]")
+                        console.print()
+                        continue
+                    else:
+                        console.print(f"[bold red]Invalid selection.[/bold red] Enter a listed number, a valid PCAP path, or 'q'.")
+                else:
+                    console.print(f"[bold red]Invalid selection.[/bold red] Enter a listed number, a valid PCAP path, or 'q'.")
+        else:
+            console.print(f"[dim yellow]No close matching PCAP files found.[/dim yellow]")
+            if target_path.parent.exists() and target_path.parent.is_dir():
+                parent_pcaps = get_available_pcaps_in_dir(target_path.parent, limit=5)
+                if parent_pcaps:
+                    console.print(f"[yellow]Available PCAP files in {target_path.parent}:[/yellow]")
+                    for p in parent_pcaps:
+                        console.print(f"  - {p.name}")
         console.print()
 
 
@@ -271,4 +329,179 @@ def prompt_export_settings() -> Dict[str, str]:
         "format": fmt.lower(),
         "filename": filename,
     }
+
+
+from utils.path_helpers import (
+    get_available_json_in_dir,
+    find_similar_json,
+    resolve_path,
+)
+
+
+def prompt_json_import_path() -> str:
+    """
+    Interactive prompt for selecting a JSON export file to import.
+    Features:
+    - Normalizes path, strips quotes, expands user ~.
+    - Rejects directories cleanly: if a directory is supplied, inspects it for .json files
+      and displays them as numbered selectable options.
+    - Checks file existence and provides 'Did you mean?' typo suggestions if missing.
+    - Rejects unsupported extensions (e.g. .pcap, .csv, .txt) with clear messages.
+    - Gracefully handles empty input and cancellation ('q').
+    """
+    screen_manager.set_state(ScreenState.TASK_CONFIG)
+    console.print("[bold cyan]Import JSON Data[/bold cyan]")
+    console.print()
+
+    # Discover available JSON exports in exports/ or current working directory
+    cwd = Path.cwd()
+    search_dirs = [cwd / "exports", cwd]
+    available_json = []
+    seen_paths = set()
+    for d in search_dirs:
+        for p in get_available_json_in_dir(d, limit=6):
+            if p.resolve() not in seen_paths:
+                seen_paths.add(p.resolve())
+                available_json.append(p)
+
+    if available_json:
+        console.print("[bold green]Available JSON export files:[/bold green]")
+        for idx, json_path in enumerate(available_json[:5], 1):
+            size_kb = json_path.stat().st_size / 1024.0 if json_path.exists() else 0
+            rel_str = str(json_path.relative_to(cwd)) if json_path.is_relative_to(cwd) else str(json_path)
+            console.print(f"  [{idx}] {rel_str} [dim]({size_kb:.1f} KB)[/dim]")
+        console.print()
+
+    while True:
+        raw_input = Prompt.ask(
+            "Path to JSON export file or selection number (or '[bold]q[/bold]' to cancel)",
+            default="",
+            console=console,
+        )
+
+        if not raw_input.strip():
+            console.print("[dim yellow]Please enter a JSON file path.[/dim yellow]")
+            continue
+
+        if raw_input.strip().lower() in ("q", "quit", "exit", "cancel"):
+            return ""
+
+        # Check for numeric shortcut selection from available_json list
+        if raw_input.strip().isdigit():
+            choice_num = int(raw_input.strip())
+            if 1 <= choice_num <= len(available_json):
+                selected = available_json[choice_num - 1]
+                if selected.is_file():
+                    console.print(f"\n[green]Selected:[/green] {selected.resolve()}\n")
+                    return str(selected.resolve())
+
+        # Resolve path
+        target_path = resolve_path(raw_input)
+        if not target_path:
+            console.print("[red]Invalid path format.[/red]")
+            continue
+
+        # Case 1: Directory supplied instead of a file
+        if target_path.is_dir():
+            console.print(f"\n[bold red]The selected path is a directory.[/bold red]")
+            console.print("[yellow]Please provide a JSON export file.[/yellow]\n")
+
+            dir_files = get_available_json_in_dir(target_path, limit=10)
+            if dir_files:
+                console.print(f"[bold green]JSON files found in '{target_path.name}':[/bold green]")
+                for f_idx, f_path in enumerate(dir_files, 1):
+                    console.print(f"  [{f_idx}] [cyan]{f_path.name}[/cyan]")
+                console.print()
+
+                while True:
+                    sub_choice = Prompt.ask(
+                        "Enter selection number, a JSON file path, or '[bold]q[/bold]' to cancel",
+                        default="1",
+                        console=console,
+                    ).strip()
+
+                    if not sub_choice:
+                        sub_choice = "1"
+
+                    if sub_choice.lower() in ("q", "quit", "exit", "cancel"):
+                        return ""
+
+                    if sub_choice.isdigit():
+                        s_num = int(sub_choice)
+                        if 1 <= s_num <= len(dir_files):
+                            chosen = dir_files[s_num - 1]
+                            if chosen.is_file():
+                                console.print(f"\n[green]Selected:[/green] {chosen.resolve()}\n")
+                                return str(chosen.resolve())
+                        console.print(f"[bold red]Invalid selection.[/bold red] Enter a number (1-{len(dir_files)}), a valid JSON path, or 'q'.")
+                        continue
+
+                    new_target = resolve_path(sub_choice)
+                    if new_target and new_target.is_file() and new_target.suffix.lower() == ".json":
+                        console.print(f"\n[green]Selected:[/green] {new_target.resolve()}\n")
+                        return str(new_target.resolve())
+                    elif new_target and new_target.suffix.lower() != ".json":
+                        console.print(f"[bold red]Unsupported import file type.[/bold red] Expected .json")
+                    else:
+                        console.print(f"[bold red]Invalid selection.[/bold red] Enter a listed number, a valid JSON file path, or 'q'.")
+            else:
+                console.print(f"[dim yellow]No .json files found in '{target_path}'.[/dim yellow]\n")
+            continue
+
+        # Case 2: File does not exist
+        if not target_path.exists():
+            console.print(f"\n[bold red]JSON file not found:[/bold red]")
+            console.print(f"  {target_path}\n")
+
+            suggestions = find_similar_json(target_path, cutoff=0.45, max_suggestions=5)
+            if suggestions:
+                console.print("[bold yellow]Possible matching JSON files:[/bold yellow]")
+                for s_idx, s_path in enumerate(suggestions, 1):
+                    console.print(f"  [{s_idx}] [cyan]{s_path.resolve()}[/cyan]")
+                console.print()
+
+                while True:
+                    sub_choice = Prompt.ask(
+                        "Enter selection [[bold]1[/bold]], a new path, or '[bold]q[/bold]' to cancel",
+                        default="1",
+                        console=console,
+                    ).strip()
+
+                    if not sub_choice:
+                        sub_choice = "1"
+
+                    if sub_choice.lower() in ("q", "quit", "exit", "cancel"):
+                        return ""
+
+                    if sub_choice.isdigit():
+                        s_num = int(sub_choice)
+                        if 1 <= s_num <= len(suggestions):
+                            chosen = suggestions[s_num - 1]
+                            if chosen.is_file():
+                                console.print(f"\n[green]Selected:[/green] {chosen.resolve()}\n")
+                                return str(chosen.resolve())
+                        console.print(f"[bold red]Invalid selection.[/bold red] Enter a number (1-{len(suggestions)}), a valid JSON path, or 'q'.")
+                        continue
+
+                    new_target = resolve_path(sub_choice)
+                    if new_target and new_target.is_file() and new_target.suffix.lower() == ".json":
+                        console.print(f"\n[green]Selected:[/green] {new_target.resolve()}\n")
+                        return str(new_target.resolve())
+                    elif new_target and new_target.suffix.lower() != ".json":
+                        console.print(f"[bold red]Unsupported import file type.[/bold red] Expected .json")
+                    else:
+                        console.print(f"[bold red]Invalid selection.[/bold red] Enter a listed number, a valid JSON file path, or 'q'.")
+            else:
+                console.print("[dim yellow]No close matching JSON files found.[/dim yellow]\n")
+            continue
+
+        # Case 3: Wrong extension
+        if target_path.suffix.lower() != ".json":
+            console.print(f"\n[bold red]Unsupported import file type: '{target_path.suffix}'[/bold red]")
+            console.print("[yellow]Expected:[/yellow] .json\n")
+            continue
+
+        # Case 4: Valid existing JSON file
+        console.print(f"\n[green]Selected:[/green] {target_path.resolve()}\n")
+        return str(target_path.resolve())
 

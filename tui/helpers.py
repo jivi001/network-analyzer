@@ -98,12 +98,12 @@ def severity_badge(severity: str) -> str:
 
 
 def build_bar(value: float, max_value: float, width: int = 20) -> str:
-    """ASCII bar chart."""
+    """Portable cross-platform bar chart."""
     if max_value <= 0:
-        return "░" * width
+        return "-" * width
     ratio = min(value / max_value, 1.0)
     filled_blocks = int(ratio * width)
-    return "█" * filled_blocks + "░" * (width - filled_blocks)
+    return "=" * filled_blocks + "-" * (width - filled_blocks)
 
 
 def truncate(text: str, max_len: int = 50) -> str:

@@ -5,12 +5,13 @@ path_helpers.py — Safe, intelligent path resolution, normalization, and typo m
 import os
 import difflib
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 SUPPORTED_PCAP_EXTENSIONS = (".pcap", ".pcapng", ".cap")
+SUPPORTED_JSON_EXTENSIONS = (".json",)
 
 
-def clean_pcap_path_input(raw_input: str) -> str:
+def clean_path_input(raw_input: str) -> str:
     """
     Cleans raw user input by stripping whitespace and matching quotes.
     Preserves valid Windows drive letters, backslashes, and UNC paths.
@@ -25,12 +26,16 @@ def clean_pcap_path_input(raw_input: str) -> str:
     return cleaned
 
 
-def resolve_pcap_path(raw_input: str) -> Optional[Path]:
+# Retain clean_pcap_path_input for backward compatibility
+clean_pcap_path_input = clean_path_input
+
+
+def resolve_path(raw_input: str) -> Optional[Path]:
     """
     Normalizes and expands user path strings into a Path object.
-    Supports absolute Windows paths (e.g. D:\\path\\file.pcap), relative paths, and ~ expansion.
+    Supports absolute Windows paths (e.g. D:\\path\\file.json), relative paths, and ~ expansion.
     """
-    cleaned = clean_pcap_path_input(raw_input)
+    cleaned = clean_path_input(raw_input)
     if not cleaned:
         return None
     try:
@@ -40,32 +45,51 @@ def resolve_pcap_path(raw_input: str) -> Optional[Path]:
         return None
 
 
-def get_available_pcaps_in_dir(dir_path: Path, limit: int = 10) -> List[Path]:
+# Retain resolve_pcap_path for backward compatibility
+resolve_pcap_path = resolve_path
+
+
+def get_available_files_in_dir(
+    dir_path: Path, extensions: tuple = SUPPORTED_PCAP_EXTENSIONS, limit: int = 10
+) -> List[Path]:
     """
-    Lists valid PCAP files in a directory up to the specified limit.
+    Lists valid files matching the specified extensions in a directory up to limit.
     """
     if not dir_path.exists() or not dir_path.is_dir():
         return []
 
     try:
-        pcap_files = []
+        matched_files = []
         for entry in dir_path.iterdir():
-            if entry.is_file() and entry.suffix.lower() in SUPPORTED_PCAP_EXTENSIONS:
-                pcap_files.append(entry)
-        pcap_files.sort(key=lambda p: p.name.lower())
-        return pcap_files[:limit]
+            if entry.is_file() and entry.suffix.lower() in extensions:
+                matched_files.append(entry)
+        matched_files.sort(key=lambda p: p.name.lower())
+        return matched_files[:limit]
     except (PermissionError, OSError):
         return []
 
 
-def find_similar_pcap(target_path: Path, cutoff: float = 0.5) -> Optional[Path]:
+def get_available_pcaps_in_dir(dir_path: Path, limit: int = 10) -> List[Path]:
+    """Lists valid PCAP files in a directory up to the specified limit."""
+    return get_available_files_in_dir(dir_path, extensions=SUPPORTED_PCAP_EXTENSIONS, limit=limit)
+
+
+def get_available_json_in_dir(dir_path: Path, limit: int = 10) -> List[Path]:
+    """Lists valid JSON export files in a directory up to the specified limit."""
+    return get_available_files_in_dir(dir_path, extensions=SUPPORTED_JSON_EXTENSIONS, limit=limit)
+
+
+def find_similar_files(
+    target_path: Path,
+    extensions: tuple = SUPPORTED_PCAP_EXTENSIONS,
+    cutoff: float = 0.45,
+    max_suggestions: int = 5,
+) -> List[Path]:
     """
-    Intelligently searches for closely matching PCAP filenames in the target or candidate directories.
-    Handles typos (e.g. tast1.pcap -> test1.pcap, testl.pcap -> test1.pcap) and case differences.
+    Intelligently searches for closely matching filenames in candidate directories.
     """
     candidate_dirs = []
 
-    # 1. Check parent directory of target path if accessible
     try:
         parent = target_path.parent
         if parent.exists() and parent.is_dir():
@@ -73,7 +97,6 @@ def find_similar_pcap(target_path: Path, cutoff: float = 0.5) -> Optional[Path]:
     except Exception:
         pass
 
-    # 2. Check current directory and exports directory
     cwd = Path.cwd()
     if cwd not in candidate_dirs and cwd.exists():
         candidate_dirs.append(cwd)
@@ -84,29 +107,56 @@ def find_similar_pcap(target_path: Path, cutoff: float = 0.5) -> Optional[Path]:
     target_name = target_path.name.lower()
     target_stem = target_path.stem.lower()
 
+    results: List[Path] = []
+    seen_paths = set()
+
     for directory in candidate_dirs:
-        available = get_available_pcaps_in_dir(directory, limit=50)
+        available = get_available_files_in_dir(directory, extensions=extensions, limit=50)
         if not available:
             continue
 
-        # Map lowercased names and stems back to Path
         name_map = {f.name.lower(): f for f in available}
         stem_map = {f.stem.lower(): f for f in available}
 
-        # Exact stem match with different case or extension (e.g. test1.PCAP or test1.pcapng)
         if target_name in name_map:
-            return name_map[target_name]
+            p = name_map[target_name]
+            if p.resolve() not in seen_paths:
+                seen_paths.add(p.resolve())
+                results.append(p)
         if target_stem in stem_map:
-            return stem_map[target_stem]
+            p = stem_map[target_stem]
+            if p.resolve() not in seen_paths:
+                seen_paths.add(p.resolve())
+                results.append(p)
 
-        # Fuzzy match on full filename
-        matches = difflib.get_close_matches(target_name, list(name_map.keys()), n=1, cutoff=cutoff)
-        if matches:
-            return name_map[matches[0]]
+        matches = difflib.get_close_matches(target_name, list(name_map.keys()), n=max_suggestions, cutoff=cutoff)
+        for m in matches:
+            p = name_map[m]
+            if p.resolve() not in seen_paths:
+                seen_paths.add(p.resolve())
+                results.append(p)
 
-        # Fuzzy match on stem
-        stem_matches = difflib.get_close_matches(target_stem, list(stem_map.keys()), n=1, cutoff=cutoff)
-        if stem_matches:
-            return stem_map[stem_matches[0]]
+        stem_matches = difflib.get_close_matches(target_stem, list(stem_map.keys()), n=max_suggestions, cutoff=cutoff)
+        for sm in stem_matches:
+            p = stem_map[sm]
+            if p.resolve() not in seen_paths:
+                seen_paths.add(p.resolve())
+                results.append(p)
 
-    return None
+    return results[:max_suggestions]
+
+
+def find_similar_pcaps(target_path: Path, cutoff: float = 0.45, max_suggestions: int = 5) -> List[Path]:
+    """Searches for matching PCAP files."""
+    return find_similar_files(target_path, extensions=SUPPORTED_PCAP_EXTENSIONS, cutoff=cutoff, max_suggestions=max_suggestions)
+
+
+def find_similar_pcap(target_path: Path, cutoff: float = 0.45) -> Optional[Path]:
+    """Compatibility helper returning the top closest matching PCAP or None."""
+    matches = find_similar_pcaps(target_path, cutoff=cutoff, max_suggestions=1)
+    return matches[0] if matches else None
+
+
+def find_similar_json(target_path: Path, cutoff: float = 0.45, max_suggestions: int = 5) -> List[Path]:
+    """Searches for matching JSON files."""
+    return find_similar_files(target_path, extensions=SUPPORTED_JSON_EXTENSIONS, cutoff=cutoff, max_suggestions=max_suggestions)

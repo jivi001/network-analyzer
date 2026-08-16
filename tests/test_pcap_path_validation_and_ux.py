@@ -1,7 +1,7 @@
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, call
 import pytest
 
 from utils.path_helpers import (
@@ -9,6 +9,7 @@ from utils.path_helpers import (
     resolve_pcap_path,
     get_available_pcaps_in_dir,
     find_similar_pcap,
+    find_similar_pcaps,
 )
 from tui.menu import prompt_pcap_path
 
@@ -46,33 +47,34 @@ class TestPathHelpers:
         assert resolve_pcap_path("") is None
         assert resolve_pcap_path("   ") is None
 
-    def test_find_similar_pcap_typo_match(self):
+    def test_find_similar_pcap_single_and_multiple(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            target_real = tmp_path / "test1.pcap"
-            target_real.touch()
+            (tmp_path / "test1.pcap").touch()
+            (tmp_path / "test2.pcap").touch()
+            (tmp_path / "testing.pcap").touch()
 
-            # 1. Typo: tast1.pcap
+            # 1. Typo matching test1.pcap
             typo_path = tmp_path / "tast1.pcap"
-            suggestion = find_similar_pcap(typo_path)
-            assert suggestion is not None
-            assert suggestion.name == "test1.pcap"
+            suggestions = find_similar_pcaps(typo_path, cutoff=0.4)
+            assert len(suggestions) >= 1
+            assert any(s.name == "test1.pcap" for s in suggestions)
 
             # 2. Case difference: TEST1.pcap
             case_path = tmp_path / "TEST1.pcap"
-            suggestion = find_similar_pcap(case_path)
-            assert suggestion is not None
-            assert suggestion.name == "test1.pcap"
+            suggestions_case = find_similar_pcaps(case_path)
+            assert len(suggestions_case) >= 1
+            assert suggestions_case[0].name == "test1.pcap"
 
             # 3. Extension difference: test1.pcapng
             ext_path = tmp_path / "test1.pcapng"
-            suggestion = find_similar_pcap(ext_path)
-            assert suggestion is not None
-            assert suggestion.name == "test1.pcap"
+            suggestions_ext = find_similar_pcaps(ext_path)
+            assert len(suggestions_ext) >= 1
+            assert suggestions_ext[0].name == "test1.pcap"
 
             # 4. Completely unrelated name
             unrelated = tmp_path / "zebra_elephant_walrus.pcap"
-            assert find_similar_pcap(unrelated) is None
+            assert len(find_similar_pcaps(unrelated, cutoff=0.6)) == 0
 
     def test_get_available_pcaps_in_dir(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -125,7 +127,7 @@ class TestPromptPcapPathUX:
             result = prompt_pcap_path()
             assert result == ""
 
-    def test_prompt_typo_with_suggestion_accepted(self):
+    def test_prompt_typo_with_suggestion_1_selected(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             real_file = tmp_path / "test1.pcap"
@@ -133,8 +135,75 @@ class TestPromptPcapPathUX:
 
             typo_input = str(tmp_path / "tast1.pcap")
 
-            # First Prompt.ask returns typo, Confirm.ask returns True
-            with patch("rich.prompt.Prompt.ask", return_value=typo_input):
-                with patch("rich.prompt.Confirm.ask", return_value=True):
-                    result = prompt_pcap_path()
-                    assert result == str(real_file.resolve())
+            # First Prompt.ask returns typo path, second Prompt.ask returns "1"
+            with patch("rich.prompt.Prompt.ask", side_effect=[typo_input, "1"]):
+                result = prompt_pcap_path()
+                assert result == str(real_file.resolve())
+
+    def test_prompt_typo_with_multiple_suggestions_and_select_2(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            real_file1 = tmp_path / "test1.pcap"
+            real_file2 = tmp_path / "test2.pcap"
+            real_file1.touch()
+            real_file2.touch()
+
+            typo_input = str(tmp_path / "test3.pcap")
+
+            # First Prompt.ask returns typo path, second Prompt.ask returns "2"
+            with patch("rich.prompt.Prompt.ask", side_effect=[typo_input, "2"]):
+                result = prompt_pcap_path()
+                # Should return one of the existing test files
+                assert result in (str(real_file1.resolve()), str(real_file2.resolve()))
+
+    def test_prompt_invalid_selection_then_valid(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            real_file = tmp_path / "test1.pcap"
+            real_file.touch()
+
+            typo_input = str(tmp_path / "tast1.pcap")
+
+            # First typo, then invalid selection 99, then valid selection 1
+            with patch("rich.prompt.Prompt.ask", side_effect=[typo_input, "99", "1"]):
+                result = prompt_pcap_path()
+                assert result == str(real_file.resolve())
+
+    def test_prompt_suggestion_then_enter_new_valid_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            real_file1 = tmp_path / "test1.pcap"
+            real_file2 = tmp_path / "other_capture.pcap"
+            real_file1.touch()
+            real_file2.touch()
+
+            typo_input = str(tmp_path / "tast1.pcap")
+            new_valid_input = str(real_file2)
+
+            # First typo, then enters valid path to real_file2 directly
+            with patch("rich.prompt.Prompt.ask", side_effect=[typo_input, new_valid_input]):
+                result = prompt_pcap_path()
+                assert result == str(real_file2.resolve())
+
+    def test_prompt_suggestion_then_cancel_q(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            real_file = tmp_path / "test1.pcap"
+            real_file.touch()
+
+            typo_input = str(tmp_path / "tast1.pcap")
+
+            # First typo, then user types "q" at the suggestion prompt
+            with patch("rich.prompt.Prompt.ask", side_effect=[typo_input, "q"]):
+                result = prompt_pcap_path()
+                assert result == ""
+
+    def test_prompt_no_suggestions_then_quit(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            unrelated_input = str(tmp_path / "completely_unrelated_xyz_123.pcap")
+
+            # First unrelated path with no suggestions, then user types "q"
+            with patch("rich.prompt.Prompt.ask", side_effect=[unrelated_input, "q"]):
+                result = prompt_pcap_path()
+                assert result == ""

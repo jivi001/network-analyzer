@@ -760,6 +760,9 @@ def run_pcap_analysis(config: dict, db: Database, privacy: PrivacyFilter):
     # Display results
     display_pcap_analysis(packets, stats_snapshot, alert_manager.get_all())
     console.print()
+    div_width = min(console.size.width or 80, 80)
+    console.print("[dim]" + "─" * div_width + "[/dim]")
+    console.print()
 
     # Offer export
     if packets and Confirm.ask("Export analysis report?", default=False, console=console):
@@ -844,16 +847,25 @@ def run_history_viewer(db: Database):
 
         elif choice == "5":
             # Import JSON Data
-            filepath = Prompt.ask("Path to JSON export file", console=console)
-            if os.path.exists(filepath):
+            from tui.menu import prompt_json_import_path
+            filepath = prompt_json_import_path()
+            if filepath:
                 from storage.importer import Importer
                 importer = Importer(db)
-                if importer.import_json(filepath):
-                    console.print(f"\n[bold green]Successfully imported records from {filepath}[/bold green]")
-                else:
-                    console.print("\n[bold red]Failed to import records.[/bold red]")
-            else:
-                console.print(f"\n[red]Error: File '{filepath}' not found.[/red]")
+                try:
+                    res = importer.import_json(filepath)
+                    console.print(f"\n[bold green]JSON import successful.[/bold green]\n")
+                    console.print(f"  Session ID: [bold cyan]#{res.session_id}[/bold cyan]")
+                    console.print(f"  Records imported: [bold white]{res.total_records}[/bold white]")
+                    if res.alert_count > 0:
+                        console.print(f"  Alerts: [bold red]{res.alert_count}[/bold red]")
+                    if res.host_count > 0:
+                        console.print(f"  Hosts: [bold green]{res.host_count}[/bold green]")
+                    if res.packet_count > 0:
+                        console.print(f"  Packets: [bold yellow]{res.packet_count:,}[/bold yellow] ({format_bytes(res.total_bytes)})")
+                except Exception as e:
+                    from rich.markup import escape
+                    console.print(f"\n[bold red]Import failed:[/bold red] {escape(str(e))}")
             
             console.print()
             Prompt.ask("Press Enter to return to history menu", default="", console=console)

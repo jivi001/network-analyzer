@@ -1,40 +1,56 @@
 # Data Exporter & Importer (`storage/exporter.py` & `importer.py`)
 
-## 1. Exporter (`storage/exporter.py`)
+## 1. Format-Specific Exporter (`storage/exporter.py`)
 
-`storage/exporter.py` exports captured network packets, detection alerts, and session summaries into CSV, JSON, or PCAP formats.
+`storage/exporter.py` exports live capture data, offline PCAP forensics, security alerts, and host discovery records into format-specific outputs: `.pcap`, `.csv`, or `.json`.
 
 ### Path Traversal Protection
-All export filename paths are sanitized using `_sanitize_export_path(filename, default_ext)`:
+All export paths are sanitized and validated using `Exporter.validate_export_path(filepath, export_dir)`:
 - Strips leading/trailing whitespace.
-- Prevents directory traversal vectors (`../`, `..\\`).
-- Enforces placement strictly inside the configured `export_directory` (default: `"exports"`).
+- Prevents directory traversal attacks (`..`).
+- Blocks absolute root paths (`/etc/passwd`, `C:\Windows\system32`).
+- Enforces placement inside the configured `export_directory` (default: `"exports"`) or validated subfolders.
+- Enforces format extension allowlists (`.pcap`, `.csv`, `.json`).
 
-### Supported Formats
+---
 
-#### A. CSV Export (`export_csv`)
-Outputs tabular CSV containing:
-`Timestamp, Source IP, Source Port, Destination IP, Destination Port, Protocol, Length, Service, Flags, Info`.
+### Supported Export Formats
 
-#### B. JSON Export (`export_json`)
-Outputs structured JSON document containing:
-- Session metadata (ID, start time, packet count, total bytes).
-- Array of decoded packet dictionaries.
-- Optional raw hex payloads if `config.yaml` (`json_include_payload`) is set to `true`.
+#### A. Raw Binary PCAP Export (`export_pcap`)
+- Extracts raw Scapy packet binaries from `PacketInfo` objects.
+- Uses Scapy's `wrpcap()` / `PcapWriter` to produce standard binary PCAP captures.
+- **Verification**: Fully compatible with and readable by Wireshark, tcpdump, and Scapy (`rdpcap()`).
 
-#### C. PCAP Streaming (`PcapWriter` & `export_pcap`)
-- `PcapWriter`: Implements thread-safe packet writing to an offline `.pcap` file using Scapy's `scapy.PcapWriter`.
-- Bounded packet streaming ensures raw Ethernet packets are safely persisted without keeping large packet buffers in RAM.
+#### B. Structured CSV Export (`export_csv`)
+- Produces RFC 4180 standard comma-separated values with minimal quoting.
+- **Packet Stream Format**: `id, timestamp, src_ip, src_port, dst_ip, dst_port, protocol, length, service, info`
+- **Security Alerts Format**: `id, timestamp, severity, rule_name, message, src_ip, dst_ip, dst_port, protocol`
+
+#### C. Machine-Readable JSON Export (`export_json`)
+- Produces fully serialized JSON with structured fields:
+  - `metadata`: `application`, `version`, `exported_at`, `total_packets`, `total_alerts`, `total_hosts`.
+  - `stats`: `total_packets`, `total_bytes`, `elapsed_seconds`, `packets_per_sec`, `bytes_per_sec`, `unique_hosts`, `protocol_counts`, `top_talkers`.
+  - `alerts`: List of serializable alert objects.
+  - `hosts`: List of discovered hosts with IP, MAC, hostname, open ports, and services.
+  - `packets`: Optional list of decoded packet records.
 
 ---
 
 ## 2. Importer (`storage/importer.py`)
 
-`storage/importer.py` validates and imports previously exported session JSON files into the database.
+`storage/importer.py` validates and imports previously exported session JSON files into the SQLite database with strict validation and transaction safety.
 
-### Strict Schema Validation
+### Intelligent Path & Directory Handling
+- **Path Sanitization**: Strips surrounding whitespace and matching quotes (e.g. `"./exports/export.json"`).
+- **Directory Inspection**: If a directory path is provided (e.g. `./exports/`), the application automatically discovers `.json` files in that folder and presents them as numbered selectable options (`[1] export_1.json`, `[2] export_2.json`).
+- **Typo Recovery**: If a missing file is requested, intelligent fuzzy matching suggests close candidates in candidate directories.
+- **Extension Enforcement**: Rejects non-`.json` files (e.g. `.pcap`, `.csv`, `.txt`) with explicit feedback before parsing.
+
+### Strict Schema Validation & Transaction Safety
 Before inserting imported data:
-- Validates existence of required keys (`session_type`, `start_time`, `packets`).
-- Validates data types (e.g. `packet_count` must be non-negative integer).
-- Rejects malformed or corrupted JSON documents with explicit `ValueError` messages.
-- Operates inside an atomic database transaction (rolls back all changes if any packet row fails insertion).
+- Validates root JSON object structure and presence of recognized sections (`metadata`, `stats`, `alerts`, `hosts`, `packets`, `session`).
+- Validates data types (`alerts` and `hosts` as arrays, `stats` and `metadata` as dictionaries).
+- Rejects malformed JSON syntax or incompatible schemas with descriptive errors.
+- **Transaction Safety**: Validates and constructs all internal models in-memory before acquiring database locks; executes inserts within an atomic transaction.
+- **Duplicate & Session Isolation**: Creates a new session of type `session_type="imported"` linked to the imported metadata, saving alerts and discovered hosts safely without ID collisions.
+- **Import Metrics Reporting**: Returns an `ImportResult` summarizing session ID, total records, alerts, hosts, and packet counts.

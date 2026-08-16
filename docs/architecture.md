@@ -16,7 +16,7 @@
                                                  │ Thread-Safe Callback
                                                  ▼
                                ┌───────────────────────────────────┐
-                               │ Bounded Queue (queue.Queue 5000)  │
+                               │ Bounded Queue (queue.Queue 10000) │
                                └─────────────────┬─────────────────┘
                                                  │ Packet Worker Loop
                                                  ▼
@@ -56,25 +56,25 @@
 
 | Directory / File | Subsystem | Key Responsibilities |
 |------------------|-----------|----------------------|
-| [sentinel.py](file:///d:/Programs/Security/network-analyzer/sentinel.py) | Application Entry & Controller | CLI argument parsing, startup orchestration, interactive menu routing, graceful shutdown sequence. |
-| [config.yaml](file:///d:/Programs/Security/network-analyzer/config.yaml) | Configuration System | YAML configuration defaults for capture buffers, scanner timeouts, detection thresholds, and exports. |
-| [core/sniffer.py](file:///d:/Programs/Security/network-analyzer/core/sniffer.py) | Live Packet Capture | Scapy wrapper (`PacketSniffer`), daemon sniffing thread, BPF filter application, capture state machine. |
-| [core/processor.py](file:///d:/Programs/Security/network-analyzer/core/processor.py) | Packet Decoder | Converts raw Scapy packet objects into standardized `PacketInfo` dataclass instances. |
-| [core/scanner.py](file:///d:/Programs/Security/network-analyzer/core/scanner.py) | Network Scanner | Nmap integration via `python-nmap`, 12 bounded scan profiles, allowlist enforcement, target validation. |
-| [core/stats.py](file:///d:/Programs/Security/network-analyzer/core/stats.py) | Metric Aggregator | Thread-safe `StatsAggregator`, protocol counts, IP volume tracking, top talkers, exponential moving average rates. |
-| [detection/pipeline.py](file:///d:/Programs/Security/network-analyzer/detection/pipeline.py) | Detection Pipeline | `PacketDetectionPipeline` delegating to `RuleEngine`, `AnomalyDetector`, and `ArpMonitor`. |
-| [detection/rule_engine.py](file:///d:/Programs/Security/network-analyzer/detection/rule_engine.py) | Signature Engine | Evaluates YAML signature rules against `PacketInfo` attributes with deduplication windows. |
-| [detection/anomaly.py](file:///d:/Programs/Security/network-analyzer/detection/anomaly.py) | Behavioral Engine | Shannon entropy DNS exfiltration analysis and sliding-window port scan detection. |
-| [detection/arp_monitor.py](file:///d:/Programs/Security/network-analyzer/detection/arp_monitor.py) | L2 Security | IP-to-MAC mapping state machine for ARP spoofing and MAC alteration detection. |
-| [detection/alerts.py](file:///d:/Programs/Security/network-analyzer/detection/alerts.py) | Alert Manager | Ring buffer memory storage, severity filtering, alert counters, SQLite persistence. |
-| [storage/database.py](file:///d:/Programs/Security/network-analyzer/storage/database.py) | SQLite Storage Layer | Thread-safe connection pooling, WAL mode, Schema DDL, transactional sessions, alerts, hosts, and scan results. |
-| [storage/models.py](file:///d:/Programs/Security/network-analyzer/storage/models.py) | Data Models | Dataclasses: `PacketInfo`, `AlertInfo`, `SessionInfo`, `HostInfo`, `ScanResult`, `StatsSnapshot`. |
-| [storage/exporter.py](file:///d:/Programs/Security/network-analyzer/storage/exporter.py) | Exporter | CSV, JSON, and PCAP export streams with path traversal protection. |
-| [storage/importer.py](file:///d:/Programs/Security/network-analyzer/storage/importer.py) | Importer | Session import and strict JSON file parsing with schema validation. |
-| [tui/](file:///d:/Programs/Security/network-analyzer/tui/) | Rich TUI Subsystem | Single `Console` view routing (`dashboard.py`, `menu.py`, `scan_view.py`, `pcap_view.py`, `history_view.py`). |
-| [utils/console.py](file:///d:/Programs/Security/network-analyzer/utils/console.py) | Console Renderer | Single shared `Console` instance owner preventing TUI rendering overlap. |
-| [utils/privacy.py](file:///d:/Programs/Security/network-analyzer/utils/privacy.py) | Privacy Masking | Deterministic or anonymized IP address masking filter (`PrivacyFilter`). |
-| [utils/privileges.py](file:///d:/Programs/Security/network-analyzer/utils/privileges.py) | Environment Checks | Windows Administrator check (`ctypes.windll.shell32.IsUserAnAdmin`), Npcap and Nmap validation. |
+| [`sentinel.py`](../sentinel.py) | Application Entry & Controller | CLI argument parsing, startup orchestration, interactive menu routing, graceful shutdown sequence. |
+| [`config.yaml`](../config.yaml) | Configuration System | YAML configuration defaults for capture buffers, scanner timeouts, detection thresholds, and exports. |
+| [`core/sniffer.py`](../core/sniffer.py) | Live Packet Capture | Scapy wrapper (`PacketSniffer`), daemon sniffing thread, BPF filter application, capture state machine. |
+| [`core/processor.py`](../core/processor.py) | Packet Decoder | Converts raw Scapy packet objects into standardized `PacketInfo` dataclass instances. |
+| [`core/scanner.py`](../core/scanner.py) | Network Scanner | Nmap integration via `python-nmap`, 12 bounded scan profiles, allowlist enforcement, target validation. |
+| [`core/stats.py`](../core/stats.py) | Metric Aggregator | Thread-safe `StatsAggregator`, protocol counts, IP volume tracking, top talkers, exponential moving average rates. |
+| [`detection/pipeline.py`](../detection/pipeline.py) | Detection Pipeline | `PacketDetectionPipeline` delegating to `RuleEngine`, `AnomalyDetector`, and `ArpMonitor`. |
+| [`detection/rule_engine.py`](../detection/rule_engine.py) | Signature Engine | Evaluates YAML signature rules against `PacketInfo` attributes with deduplication windows. |
+| [`detection/anomaly.py`](../detection/anomaly.py) | Behavioral Engine | Shannon entropy DNS exfiltration analysis and sliding-window port scan detection. |
+| [`detection/arp_monitor.py`](../detection/arp_monitor.py) | L2 Security | IP-to-MAC mapping state machine for ARP spoofing and MAC alteration detection. |
+| [`detection/alerts.py`](../detection/alerts.py) | Alert Manager | Ring buffer memory storage, severity filtering, alert counters, SQLite persistence. |
+| [`storage/database.py`](../storage/database.py) | SQLite Storage Layer | Thread-safe connection pooling, WAL mode, Schema DDL, transactional sessions, alerts, hosts, and scan results. |
+| [`storage/models.py`](../storage/models.py) | Data Models | Dataclasses: `PacketInfo`, `AlertInfo`, `SessionInfo`, `HostInfo`, `ScanResult`, `StatsSnapshot`. |
+| [`storage/exporter.py`](../storage/exporter.py) | Exporter | CSV, JSON, and PCAP export streams with path traversal protection. |
+| [`storage/importer.py`](../storage/importer.py) | Importer | Session import and strict JSON file parsing with schema validation. |
+| [`tui/`](../tui/) | Rich TUI Subsystem | Single `Console` view routing (`dashboard.py`, `menu.py`, `scan_view.py`, `pcap_view.py`, `history_view.py`). |
+| [`utils/console.py`](../utils/console.py) | Console Renderer | Single shared `Console` instance owner preventing TUI rendering overlap. |
+| [`utils/privacy.py`](../utils/privacy.py) | Privacy Masking | Deterministic or anonymized IP address masking filter (`PrivacyFilter`). |
+| [`utils/privileges.py`](../utils/privileges.py) | Environment Checks | Windows Administrator check (`ctypes.windll.shell32.IsUserAnAdmin`), Npcap and Nmap validation. |
 
 ---
 

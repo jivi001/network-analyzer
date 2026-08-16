@@ -19,7 +19,7 @@ To install `sentinel` as a global CLI command accessible from any PowerShell pro
 1. Open PowerShell as Administrator.
 2. Navigate to the project directory:
    ```powershell
-   cd D:\Programs\Security\network-analyzer
+   cd network-analyzer
    ```
 3. Run the installation script:
    ```powershell

@@ -8,7 +8,7 @@ param (
 $ErrorActionPreference = "Stop"
 
 Write-Host "================================================" -ForegroundColor Cyan
-Write-Host "       🛡️  Installing my-sentinel CLI 🛡️       " -ForegroundColor Cyan
+Write-Host "           Installing my-sentinel CLI           " -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition

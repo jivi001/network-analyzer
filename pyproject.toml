@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-cov>=5.0",
 ]
 
 [project.scripts]
@@ -26,5 +27,5 @@ sentinel = "sentinel:main"
 sentinal = "sentinel:main"
 
 [tool.setuptools]
-py-modules = ["sentinel"]
+py-modules = ["sentinel", "traffic_lab"]
 packages = ["core", "detection", "network", "storage", "tui", "utils"]
