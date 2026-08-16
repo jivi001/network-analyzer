@@ -183,12 +183,12 @@ Explore the operational knowledge base:
 
 ## 🧪 Testing Verification
 
-Run the 235-test automated regression, stress, and end-to-end workflow suite:
+Run the 244-test automated regression, stress, and end-to-end workflow suite:
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/ -v
 ```
 
 ```text
-============================ 235 passed in 16.24s =============================
+============================ 244 passed in 19.41s =============================
 ```

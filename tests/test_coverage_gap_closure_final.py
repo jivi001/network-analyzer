@@ -162,3 +162,58 @@ class TestMenuPromptsGaps:
             with patch("rich.prompt.Prompt.ask", side_effect=[typo_path, "1"]):
                 selected = prompt_json_import_path()
                 assert selected == str(json_file.resolve())
+
+    def test_prompt_pcap_path_quick_select_and_directory(self):
+        from tui.menu import prompt_pcap_path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pcap_file = Path(tmpdir) / "capture_1.pcap"
+            pcap_file.write_bytes(b"test_pcap_content")
+
+            # 1. Directory entered -> directory inspected -> user enters exact file path
+            with patch("rich.prompt.Prompt.ask", side_effect=[tmpdir, str(pcap_file)]):
+                selected = prompt_pcap_path()
+                assert selected == str(pcap_file.resolve())
+
+            # 2. Typo in pcap filename -> typo suggestions listed -> selects suggestion [1]
+            typo_path = os.path.join(tmpdir, "captur_1.pcap")
+            with patch("rich.prompt.Prompt.ask", side_effect=[typo_path, "1"]):
+                selected = prompt_pcap_path()
+                assert selected == str(pcap_file.resolve())
+
+
+class TestSentinelWorkerLiveCaptureGaps:
+    def test_live_capture_worker_packet_pipeline(self):
+        from sentinel import run_live_capture
+        from scapy.layers.inet import IP, TCP
+
+        db = MagicMock(spec=Database)
+        db.create_session.return_value = 500
+        priv = MagicMock()
+        priv.enabled = False
+
+        raw_scapy = IP(src="192.168.1.100", dst="192.168.1.1")/TCP(sport=4321, dport=80, flags="S")
+
+        # Mock sniffer so starting puts a packet into the queue
+        with patch("sentinel.prompt_capture_settings", return_value={"interface": "eth0", "target_ip": "", "bpf_filter": "tcp"}), \
+             patch("sentinel.Live.start"), \
+             patch("sentinel.Live.stop"), \
+             patch("sentinel.Live.update"), \
+             patch("sentinel.prompt_export_settings", return_value=None), \
+             patch("rich.prompt.Confirm.ask", return_value=False), \
+             patch("rich.prompt.Prompt.ask", return_value=""):
+            
+            # Start capture in background thread, let it process 1 packet, then trigger stop
+            def sniffer_mock_start(on_packet_cb, *args, **kwargs):
+                on_packet_cb(raw_scapy)
+
+            with patch("sentinel.PacketSniffer.start", side_effect=sniffer_mock_start):
+                t = threading.Thread(target=run_live_capture, args=({"packet_buffer_size": 100, "refresh_fps": 10}, db, priv))
+                t.start()
+                time.sleep(0.2)
+                # Interrupt sleep loop to finish
+                with patch("sentinel.time.sleep", side_effect=KeyboardInterrupt):
+                    t.join(timeout=3.0)
+
+            db.create_session.assert_called_once()
+            db.end_session.assert_called_once()

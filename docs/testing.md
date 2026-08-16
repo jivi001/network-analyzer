@@ -4,14 +4,14 @@
 
 ## 1. Test Suite Commands
 
-- **Test Automation**: Pytest suite (`pytest-cov`) with **235 automated tests** across 20 test modules.
-- **Coverage**: **81% overall statement coverage** with 90%+ across core security, models, database, and telemetry engines.
-- **Execution Speed**: Full suite executes in **~16 seconds**.
+- **Test Automation**: Pytest suite (`pytest-cov`) with **244 automated tests** across 21 test modules.
+- **Coverage**: **84% overall statement coverage** with 90%+ across models, telemetry, database, security predicates, and importers.
+- **Execution Speed**: Full suite executes in **~19 seconds**.
 
 Run the full automated test suite with coverage:
 
 ```powershell
-.venv\Scripts\python.exe -m pytest --cov=core --cov=detection --cov=storage --cov=tui --cov=utils --cov=traffic_lab --cov-branch --cov-report=term-missing
+.venv\Scripts\python.exe -m pytest --cov=core --cov=detection --cov=storage --cov=tui --cov=utils --cov=traffic_lab --cov=sentinel --cov-branch --cov-report=term-missing
 ```
 
 Or run standard `pytest` directly:
@@ -22,12 +22,13 @@ Or run standard `pytest` directly:
 
 ---
 
-## 2. Test Suite Breakdown (235 Total Tests)
+## 2. Test Suite Breakdown (244 Total Tests)
 
 | Test File | Focus & Subsystem Coverage | Test Count |
 |-----------|----------------------------|------------|
 | [`tests/test_audit_regressions.py`](../tests/test_audit_regressions.py) | Security hardening regressions: BPF filter validation, target validation, SQLite persistence/recovery, path traversal, rule engine deduplication, pipeline exception isolation. | 14 |
 | [`tests/test_coverage_arp_and_alerts.py`](../tests/test_coverage_arp_and_alerts.py) | Deep ARP monitor TTL eviction, maximum hosts capacity limits, AlertManager FIFO queue pruning, and concurrent alert deduplication. | 5 |
+| [`tests/test_coverage_gap_closure_final.py`](../tests/test_coverage_gap_closure_final.py) | Targeted gap closures: importer schema conversion & corrupt records, AnomalyDetector LRU eviction & beaconing alerts, TrafficLab CLI runner & UDP loop, and live capture packet worker processing. | 9 |
 | [`tests/test_coverage_history_and_storage.py`](../tests/test_coverage_history_and_storage.py) | History sub-menu interactive selection, session/alert/host rich tables, and exporter JSON with packet payload streams. | 6 |
 | [`tests/test_coverage_menu_interactive.py`](../tests/test_coverage_menu_interactive.py) | Interactive menu option routing, capture/scan settings prompts, PCAP/JSON path entry, and export configuration. | 6 |
 | [`tests/test_coverage_privileges_and_env.py`](../tests/test_coverage_privileges_and_env.py) | Cross-platform privilege checks (Windows admin / Linux UID 0), Nmap binary discovery in PATH, and Npcap driver detection. | 5 |
@@ -55,7 +56,7 @@ Or run standard `pytest` directly:
 | [`tests/test_unit_tui.py`](../tests/test_unit_tui.py) | TUI component unit tests: LiveDashboard, formatting helpers, badges, and history tables. | 9 |
 | [`tests/test_unit_utils.py`](../tests/test_unit_utils.py) | Utility unit tests: PrivacyFilter, ScreenManager, privilege diagnostics, constants, path helpers. | 12 |
 
-**Total Suite Coverage: 235 Passing Tests in ~16.2 Seconds.**
+**Total Suite Coverage: 244 Passing Tests in ~19.4 Seconds.**
 
 ---
 
