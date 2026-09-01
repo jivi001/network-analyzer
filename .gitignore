@@ -8,14 +8,20 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+ENV/
+env/
 .env
 *.pcap
 *.pcapng
 logs/
+*.log
 
-# Graphify knowledge graph
+# Graphify & Agent Configs
 graphify-out/
 GEMINI.md
+.agents/
+.gemini/
+
 # Test databases & test execution artifacts
 *.db
 *.db-shm
@@ -26,6 +32,7 @@ export_test.json
 .pytest_cache/
 .coverage
 htmlcov/
+.cache/
 
 # Build, egg, and distribution artifacts
 *.egg
@@ -34,8 +41,29 @@ htmlcov/
 dist/
 build/
 
-.agents
-.gemini
+# Package Lock & Tool Caches
+uv.lock
+.mypy_cache/
+.ruff_cache/
+
+# IDE & Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary & backup files
+*.tmp
+*.bak
 *.old
 *.old.*
+
 
