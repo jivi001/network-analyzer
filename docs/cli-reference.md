@@ -28,7 +28,7 @@ Or using the Python executable directly:
 | `--no-admin-check` | None | Bypasses startup Administrator privilege check (some features may fail). | False |
 | `--config` | `<FILEPATH>` | Overrides default `config.yaml` path. | `"config.yaml"` |
 | `--db` | `<FILEPATH>` | Overrides default SQLite database path. | `"sentinel_data.db"` |
-| `--version` | None | Displays application version (`my-sentinel v1.0.0`) and exits. | False |
+| `--version` | None | Displays application version (`my-sentinel v1.0.1`) and exits. | False |
 | `-h`, `--help` | None | Displays help message and CLI argument summary. | False |
 
 ---

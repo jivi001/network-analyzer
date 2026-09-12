@@ -40,6 +40,8 @@ from utils.constants import (
     DASHBOARD_REFRESH_MS,
     format_bytes,
 )
+
+__version__ = APP_VERSION
 from utils.console import (
     console,
     enter_alt_screen,

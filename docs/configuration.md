@@ -13,7 +13,7 @@
 
 general:
   app_name: "my-sentinel"
-  version: "1.0.0"
+  version: "1.0.1"
   database_path: "sentinel_data.db"
 
 capture:

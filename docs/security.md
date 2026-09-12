@@ -20,3 +20,28 @@ Evidence-based documentation of implemented security controls and data safety gu
 
 - **Authorized Testing Only**: Network scanning (`NetworkScanner`) must only be performed against systems and networks that you own or are explicitly authorized to assess.
 - **Privilege Separation**: Administrator / root checks enforce required permissions for raw packet capture and OS fingerprinting without granting unnecessary system rights.
+
+---
+
+## 3. XML & XXE Security Policy
+
+MY-SENTINEL establishes a strict, application-wide security policy governing XML processing and XXE mitigation:
+
+### Policy Mandates
+1. **Current Production Status**: No production XML parsing path exists within MY-SENTINEL. The application primarily consumes JSON (`importer.py`) and YAML (`yaml.safe_load`).
+2. **Forbidden Parsers**: UNTRUSTED XML MUST NOT be parsed with unsafe or default XML parsers. Specifically forbidden:
+   - `xml.etree.ElementTree.parse()` / `fromstring()`
+   - `lxml.etree.parse()` / `fromstring()`
+   - `xml.dom.minidom` / `pulldom`
+   - `xml.sax`
+3. **Mandatory Future Controls**: Any future feature requiring untrusted XML processing MUST:
+   - Use a proven hardened parser (specifically `defusedxml`).
+   - Prohibit external entity resolution (`SYSTEM` / `PUBLIC` entities).
+   - Prohibit external DTD fetching and parameter entity resolution.
+   - Prohibit XInclude and external network resource loading.
+   - Enforce strict resource limits: maximum document size, max node count, max depth, and text length to protect against Billion Laughs and quadratic blowup bombs.
+4. **Boundary Defense**:
+   - `storage/importer.py` strictly accepts only `.json` files and parses via standard `json.load()` inside atomic transactions; XML files are rejected before file opening.
+   - `storage/exporter.py` strictly restricts exports to `.pcap`, `.csv`, and `.json`; `.xml` requests are rejected.
+   - `core/scanner.py` executes Nmap via `python-nmap` with strict target validation and allowlisted arguments, rejecting `-oX`, `-oA`, and output redirection flags. No external XML files or scan outputs are parsed by MY-SENTINEL directly.
+

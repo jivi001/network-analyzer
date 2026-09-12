@@ -50,7 +50,7 @@ NetworkScanner.scan(target, scan_type)
 python-nmap API invocation (arguments: profile args + --host-timeout)
              │
              ▼
-XML Output Parsing (_parse_results) -> List[HostInfo]
+python-nmap Output Normalization (_parse_results) -> List[HostInfo]
              │
              ├──► Database.save_scan_result(result)
              ├──► Database.save_host(host)

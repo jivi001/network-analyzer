@@ -14,7 +14,7 @@ You will see the main ASCII banner and menu:
 
 ```text
   +----------------------------------------------+
-  |              my-sentinel v1.0.0              |
+  |              my-sentinel v1.0.1              |
   |      Network Traffic Analyzer & Scanner      |
   +----------------------------------------------+
 
