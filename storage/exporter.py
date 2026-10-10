@@ -1,7 +1,9 @@
 import os
+import re
 import csv
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional, Any
 
 try:
@@ -18,56 +20,169 @@ class Exporter:
     """Production Export Manager for PCAP, CSV, and JSON formats."""
 
     SUPPORTED_FORMATS = (".pcap", ".csv", ".json")
+    DEFAULT_EXPORT_DIR = "exports"
 
-    def __init__(self):
-        pass
+    # Prohibited root and sensitive system directories (lowercased)
+    PROHIBITED_DIRECTORIES_POSIX = frozenset({
+        "/", "/etc", "/bin", "/sbin", "/usr", "/boot", "/dev",
+        "/proc", "/sys", "/root", "/var/run", "/lib", "/lib64",
+        "/lost+found",
+    })
 
-    def validate_export_path(self, filepath: str, export_dir: str = "exports") -> str:
-        """Sanitize, resolve, and validate output file paths against path traversal."""
+    PROHIBITED_DIRECTORIES_WINDOWS = frozenset({
+        "windows", "winnt", "system32", "program files",
+        "program files (x86)", "recovery", "boot",
+    })
+
+    def __init__(self, default_export_dir: str = "exports", allow_absolute: bool = True):
+        self.default_export_dir = default_export_dir
+        self.allow_absolute = allow_absolute
+
+    def _verify_not_prohibited_directory(self, target_path: Path, raw_path: str) -> None:
+        """Prevent writing into root or sensitive system directories."""
+        # 1. Reject if target is equal to its parent (i.e. root filesystem / or drive root)
+        if target_path == target_path.parent or str(target_path) in ("/", "\\"):
+            raise ValueError(f"Path traversal detected in export path: '{raw_path}'")
+
+        # 2. Check Windows prohibited directories using PureWindowsPath
+        from pathlib import PureWindowsPath
+        win_parts = [p.lower() for p in PureWindowsPath(raw_path).parts]
+        if win_parts and re.match(r"^[a-zA-Z]:\\?$", win_parts[0]) and len(win_parts) <= 2:
+            raise ValueError(f"Path traversal detected in export path: '{raw_path}'")
+
+        for prohibited in self.PROHIBITED_DIRECTORIES_WINDOWS:
+            if prohibited in win_parts:
+                raise ValueError(f"Path traversal detected in export path: '{raw_path}'")
+
+        # 3. Check POSIX prohibited directories
+        target_str = str(target_path)
+        for prohibited in self.PROHIBITED_DIRECTORIES_POSIX:
+            if prohibited == "/":
+                if target_str == "/" or target_path.parent == Path("/"):
+                    raise ValueError(f"Path traversal detected in export path: '{raw_path}'")
+            else:
+                prohibited_path = Path(prohibited)
+                try:
+                    is_rel = target_path == prohibited_path or target_path.is_relative_to(prohibited_path)
+                except ValueError:
+                    is_rel = False
+                if is_rel:
+                    raise ValueError(f"Path traversal detected in export path: '{raw_path}'")
+
+    def validate_export_path(
+        self,
+        filepath: str,
+        export_dir: Optional[str] = "exports",
+        allow_absolute: Optional[bool] = None,
+    ) -> str:
+        """Sanitize, resolve, and validate output file paths against path traversal.
+
+        Ensures path containment within the permitted export directory using
+        path-aware resolution (Path.resolve() and Path.is_relative_to()).
+        Prevents traversal (..), sibling-directory prefix collisions, symlink escapes,
+        and unauthorized writes to system directories.
+        """
         if not filepath or not isinstance(filepath, str):
             raise ValueError(f"Invalid export filename: '{filepath}'")
 
         clean_path = filepath.strip()
-        if ".." in clean_path:
+        if not clean_path:
+            raise ValueError(f"Invalid export filename: '{filepath}'")
+
+        if allow_absolute is None:
+            allow_absolute = self.allow_absolute
+
+        # Normalize backslashes for cross-platform consistency
+        normalized = clean_path.replace("\\", "/")
+
+        # 1. Reject explicit '..' traversal before any resolution
+        parts = normalized.split("/")
+        if ".." in parts:
             raise ValueError(f"Path traversal detected in export path: '{filepath}'")
 
-        # Determine extension and validate
+        # 2. Validate file extension against SUPPORTED_FORMATS
         ext = os.path.splitext(clean_path)[1].lower()
         if ext and ext not in self.SUPPORTED_FORMATS:
             raise ValueError(
                 f"Unsupported export format '{ext}'. Supported formats: {', '.join(self.SUPPORTED_FORMATS)}"
             )
 
+        # 3. Resolve permitted base directory
+        if not export_dir:
+            export_dir = self.default_export_dir
+
         if not os.path.isabs(export_dir):
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            export_dir = os.path.abspath(os.path.join(base_dir, export_dir))
+            base_project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            resolved_base = Path(base_project_dir) / export_dir
+        else:
+            resolved_base = Path(export_dir)
 
-        self.ensure_export_dir(export_dir)
-        base_abs = os.path.abspath(export_dir)
+        base_dir_path = resolved_base.resolve()
 
-        # If clean_path is an absolute path directly passed (e.g. from tests or explicit user config)
-        if os.path.isabs(clean_path):
-            target_abs = os.path.abspath(clean_path)
-            # Prevent write into root directory or system directories outside valid parent
-            parent_dir = os.path.dirname(target_abs)
-            if not parent_dir or parent_dir == target_abs or clean_path in ("/etc/passwd", "C:\\Windows\\system32", "/"):
+        # 4. Check if clean_path is absolute or drive-anchored
+        is_abs = (
+            os.path.isabs(clean_path)
+            or bool(re.match(r"^[a-zA-Z]:[/\\]", clean_path))
+            or clean_path.startswith(("/", "\\"))
+        )
+
+        if is_abs:
+            # Validate system directories early regardless of allow_absolute
+            self._verify_not_prohibited_directory(Path(clean_path), filepath)
+
+            if not allow_absolute:
+                raise ValueError(f"Absolute export paths are not permitted: '{filepath}'")
+
+            target_path = Path(clean_path)
+            try:
+                real_parent = target_path.parent.resolve()
+                real_target = real_parent / target_path.name
+            except (OSError, RuntimeError) as e:
+                raise ValueError(f"Invalid export path: '{filepath}': {e}")
+
+            # Check if target is inside base_dir_path
+            if real_target.is_relative_to(base_dir_path):
+                self.ensure_export_dir(str(real_parent))
+                return str(real_target)
+
+            # If an explicit export_dir was given (different from default), reject escaping it
+            if export_dir != self.DEFAULT_EXPORT_DIR and export_dir != str(base_dir_path):
+                raise ValueError(f"Export path '{filepath}' is outside permitted directory '{export_dir}'")
+
+            # Check sibling directory prefix collisions against base_dir_path
+            if (
+                real_target.parent.parent == base_dir_path.parent
+                and real_target.parent != base_dir_path
+                and real_target.parent.name.startswith(base_dir_path.name)
+            ):
                 raise ValueError(f"Path traversal detected in export path: '{filepath}'")
-            self.ensure_export_dir(parent_dir)
-            return target_abs
 
-        # If clean_path starts with slash or root, reject
-        if clean_path.startswith(("/", "\\")) or (len(clean_path) > 1 and clean_path[1] == ":"):
-            raise ValueError(f"Path traversal detected in export path: '{filepath}'")
+            # Validate against system directories
+            self._verify_not_prohibited_directory(real_target, filepath)
+            self.ensure_export_dir(str(real_parent))
+            return str(real_target)
 
-        filename = os.path.basename(clean_path)
+        # 5. Relative path: resolve relative to base_dir_path
+        filename = os.path.basename(normalized)
         if not filename or filename in (".", ".."):
             raise ValueError(f"Invalid export filename: '{filepath}'")
 
-        target_abs = os.path.abspath(os.path.join(export_dir, filename))
-        if not target_abs.startswith(base_abs):
+        # Resolve relative target against base_dir_path
+        target_path = base_dir_path / normalized
+        try:
+            real_parent = target_path.parent.resolve()
+            real_target = real_parent / target_path.name
+        except (OSError, RuntimeError) as e:
+            raise ValueError(f"Invalid export path: '{filepath}': {e}")
+
+        # Path-aware containment check: replaces vulnerable string startswith!
+        # Prevents sibling directory collisions (e.g. exports_evil vs exports)
+        # and symlink escapes pointing outside base_dir_path
+        if not real_target.is_relative_to(base_dir_path):
             raise ValueError(f"Path traversal detected in export path: '{filepath}'")
 
-        return target_abs
+        self.ensure_export_dir(str(real_parent))
+        return str(real_target)
 
     def ensure_export_dir(self, directory: str = "exports"):
         """Create export directory if needed."""
@@ -128,7 +243,7 @@ class Exporter:
 
     def export_pcap(self, filepath: str, raw_packets: List[Any]):
         """Export raw Scapy packets or PacketInfo objects to a valid binary PCAP."""
-        if not wrpcap:
+        if wrpcap is None:
             raise RuntimeError("Scapy wrpcap not available.")
         if not raw_packets:
             raise ValueError("No packets provided for PCAP export.")
