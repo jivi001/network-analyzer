@@ -529,8 +529,8 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
                                     filepath = exporter.validate_export_path(filename, export_dir)
                                     exporter.export_json(
                                         filepath,
-                                        alert_manager.get_all(),
-                                        stats.get_snapshot(),
+                                        alerts=alert_manager.get_all(),
+                                        stats=stats.get_snapshot(),
                                     )
                                     console.print(f"[green]Exported to:[/green] {filepath}")
                                     time.sleep(1.0)
@@ -621,14 +621,14 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
                 filepath = exporter.validate_export_path(user_fn, export_dir)
 
                 if fmt == "csv":
-                    exporter.export_csv(filepath, list(packet_buffer), snapshot)
+                    exporter.export_csv(filepath, packets=list(packet_buffer), stats=snapshot)
                 elif fmt == "pcap":
                     if os.path.exists(temp_pcap_path) and os.path.getsize(temp_pcap_path) > 0:
                         shutil.copyfile(temp_pcap_path, filepath)
                     else:
                         raise RuntimeError("No raw PCAP data available for export.")
                 elif fmt == "json":
-                    exporter.export_json(filepath, alert_manager.get_all(), snapshot)
+                    exporter.export_json(filepath, alerts=alert_manager.get_all(), stats=snapshot)
                 else:
                     raise ValueError(f"Unsupported export format: {fmt}")
                 console.print(f"[green]Exported to:[/green] {filepath}")

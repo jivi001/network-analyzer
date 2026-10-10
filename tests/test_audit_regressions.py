@@ -95,8 +95,8 @@ class AuditRegressionTests(unittest.TestCase):
             csv_path = Path(tmp) / "packets.csv"
             json_path = Path(tmp) / "alerts.json"
             exporter = Exporter()
-            exporter.export_csv(str(csv_path), [packet], stats.get_snapshot())
-            exporter.export_json(str(json_path), [alert], stats.get_snapshot())
+            exporter.export_csv(str(csv_path), packets=[packet], stats=stats.get_snapshot())
+            exporter.export_json(str(json_path), alerts=[alert], stats=stats.get_snapshot())
 
             with csv_path.open(newline="", encoding="utf-8") as f:
                 rows = list(csv.DictReader(f))
