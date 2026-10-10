@@ -39,10 +39,12 @@ def _sample_process_memory_mb() -> float:
                 fn.restype = wintypes.BOOL
                 if fn(handle, ctypes.byref(counters), counters.cb):
                     return counters.WorkingSetSize / (1024 * 1024)
-        else:
+        elif sys.platform.startswith(("linux", "darwin", "freebsd", "openbsd", "netbsd")):
             import resource
             usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
             return (usage / 1024.0) if sys.platform == "darwin" else (usage / 1024.0)
+        else:
+            return 0.0
     except Exception:
         pass
     return 0.0
@@ -100,8 +102,12 @@ class StatsAggregator:
                 self.unique_hosts.add(packet.dst_ip)
 
             if packet.src_ip and packet.dst_ip:
-                # Canonical pair
-                pair = tuple(sorted([packet.src_ip, packet.dst_ip]))
+                # Canonical pair without list allocation or sorting overhead
+                pair = (
+                    (packet.src_ip, packet.dst_ip)
+                    if packet.src_ip <= packet.dst_ip
+                    else (packet.dst_ip, packet.src_ip)
+                )
                 self.conversations[pair] += 1
 
     def get_snapshot(self) -> StatsSnapshot:
