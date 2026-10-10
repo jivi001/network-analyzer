@@ -107,8 +107,8 @@ class TestStorageExporter:
             exporter.validate_export_path("test.invalid_ext")
 
     def test_export_csv_packets_and_alerts(self):
-        exporter = Exporter()
         with tempfile.TemporaryDirectory() as tmpdir:
+            exporter = Exporter(default_export_dir=tmpdir)
             csv_path = os.path.join(tmpdir, "packets.csv")
             pkts = [
                 PacketInfo(id=1, timestamp=100.0, src_ip="1.1.1.1", dst_ip="2.2.2.2", protocol="TCP", length=64)

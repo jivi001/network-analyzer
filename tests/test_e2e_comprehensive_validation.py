@@ -273,11 +273,10 @@ class CompleteEndToEndValidationTests(unittest.TestCase):
         self.assertEqual(saved_session.packet_count, 1000)
         self.assertEqual(saved_session.alert_count, 2)
 
-    # 9. Exporter & Importer Security & Validation
     def test_exporter_importer_path_traversal_and_validation(self):
-        exporter = Exporter()
         export_dir = os.path.join(self.temp_dir, "exports")
         os.makedirs(export_dir, exist_ok=True)
+        exporter = Exporter(default_export_dir=export_dir)
 
         # Valid export path
         valid_path = exporter.validate_export_path("test_export.json", export_dir)

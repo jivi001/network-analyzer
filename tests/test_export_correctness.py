@@ -10,7 +10,11 @@ import tempfile
 import pytest
 from typing import List
 
+from scapy.all import Ether, IP, TCP, rdpcap
+
 from storage.exporter import Exporter
+from storage.importer import Importer
+from storage.database import Database
 from storage.models import PacketInfo, AlertInfo, StatsSnapshot, HostInfo
 
 
@@ -19,7 +23,7 @@ class TestExportCorrectnessPhase1:
 
     @pytest.fixture
     def exporter(self):
-        return Exporter()
+        return Exporter(allow_absolute=True)
 
     @pytest.fixture
     def sample_packets(self) -> List[PacketInfo]:
@@ -268,3 +272,111 @@ class TestExportCorrectnessPhase1:
             packet_no_raw = PacketInfo(id=1, raw_packet=None)
             with pytest.raises(ValueError, match="No raw packet layer data available for PCAP export"):
                 exporter.export_pcap(out_pcap, raw_packets=[packet_no_raw])
+
+    def test_export_pcap_roundtrip_readback(self, exporter):
+        """Verify valid PCAP export with raw packet data and successful binary read-back."""
+        raw_pkt1 = Ether() / IP(src="192.168.1.10", dst="192.168.1.20") / TCP(sport=1234, dport=80)
+        raw_pkt2 = Ether() / IP(src="192.168.1.20", dst="192.168.1.10") / TCP(sport=80, dport=1234)
+
+        pkt_info1 = PacketInfo(id=1, raw_packet=raw_pkt1)
+        pkt_info2 = PacketInfo(id=2, raw_packet=raw_pkt2)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_pcap = os.path.join(tmpdir, "valid_capture.pcap")
+            exporter.export_pcap(out_pcap, raw_packets=[pkt_info1, pkt_info2])
+
+            assert os.path.exists(out_pcap)
+            assert os.path.getsize(out_pcap) > 0
+
+            # Binary read-back validation via Scapy rdpcap
+            read_packets = rdpcap(out_pcap)
+            assert len(read_packets) == 2
+            assert read_packets[0].haslayer(IP)
+            assert read_packets[0][IP].src == "192.168.1.10"
+            assert read_packets[0][IP].dst == "192.168.1.20"
+            assert read_packets[1][IP].src == "192.168.1.20"
+            assert read_packets[1][IP].dst == "192.168.1.10"
+
+    def test_export_csv_with_stats_snapshot(self, exporter, sample_packets, sample_stats):
+        """Verify export_csv accepts stats keyword argument without corrupting alerts."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_file = os.path.join(tmpdir, "packets_stats.csv")
+            exporter.export_csv(out_file, packets=sample_packets, stats=sample_stats)
+
+            assert os.path.exists(out_file)
+            with open(out_file, "r", newline="", encoding="utf-8") as f:
+                rows = list(csv.reader(f))
+            assert len(rows) == 3
+            assert rows[0][0] == "id"
+            assert rows[1][2] == "192.168.1.50"
+
+    def test_export_json_without_stats_schema_valid_and_importable(self, exporter, sample_alerts):
+        """Verify export_json without stats produces valid schema and imports into database."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_file = os.path.join(tmpdir, "alerts_no_stats.json")
+            db_path = os.path.join(tmpdir, "test.db")
+            db = Database(db_path)
+            importer = Importer(db)
+
+            exporter.export_json(out_file, alerts=sample_alerts)
+            assert os.path.exists(out_file)
+
+            with open(out_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            valid, msg = importer.validate_json_schema(data)
+            assert valid is True, f"JSON without stats must pass schema validation: {msg}"
+            assert isinstance(data.get("stats"), dict)
+
+            result = importer.import_json(out_file)
+            assert result.success is True
+            assert result.alert_count == len(sample_alerts)
+
+    def test_export_json_unicode_and_special_characters(self, exporter):
+        """Verify export_json handles Unicode and special characters without encoding errors."""
+        special_packet = PacketInfo(
+            id=1,
+            timestamp_str="12:00:00",
+            src_ip="10.0.0.1",
+            dst_ip="10.0.0.2",
+            protocol="HTTP",
+            info="Special: ⚠️ Alert 日本語 / <script>alert(1)</script> \r\n \"quotes\"",
+        )
+        special_alert = AlertInfo(
+            id=1,
+            timestamp_str="12:00:00",
+            severity="HIGH",
+            rule_name="UnicodeRule 🛡️",
+            message="Injection test: ' OR 1=1 -- \n\t\"quoted\"",
+            src_ip="10.0.0.1",
+            dst_ip="10.0.0.2",
+            protocol="TCP",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_file = os.path.join(tmpdir, "special.json")
+            exporter.export_json(out_file, alerts=[special_alert], packets=[special_packet])
+            assert os.path.exists(out_file)
+
+            with open(out_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            assert data["alerts"][0]["rule_name"] == "UnicodeRule 🛡️"
+            assert data["alerts"][0]["message"] == special_alert.message
+            assert data["packets"][0]["info"] == special_packet.info
+
+    def test_export_pcap_direct_scapy_packets(self, exporter):
+        """Verify export_pcap accepts bare Scapy packets directly (not wrapped in PacketInfo)."""
+        raw1 = Ether() / IP(src="10.1.1.1", dst="10.2.2.2") / TCP(sport=5555, dport=80)
+        raw2 = Ether() / IP(src="10.2.2.2", dst="10.1.1.1") / TCP(sport=80, dport=5555)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_pcap = os.path.join(tmpdir, "bare_packets.pcap")
+            exporter.export_pcap(out_pcap, raw_packets=[raw1, raw2])
+
+            assert os.path.exists(out_pcap)
+            assert os.path.getsize(out_pcap) > 0
+
+            read = rdpcap(out_pcap)
+            assert len(read) == 2
+            assert read[0][IP].src == "10.1.1.1"
+            assert read[1][IP].src == "10.2.2.2"

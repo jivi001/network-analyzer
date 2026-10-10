@@ -181,10 +181,10 @@ class TestJsonImportValidationAndUX:
                 os.remove(bad_schema_path)
 
     def test_export_to_import_roundtrip(self, temp_db):
-        exporter = Exporter()
         importer = Importer(temp_db)
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            exporter = Exporter(default_export_dir=tmpdir)
             out_file = os.path.join(tmpdir, "roundtrip_export.json")
 
             stats = StatsSnapshot(

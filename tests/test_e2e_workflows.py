@@ -76,7 +76,7 @@ class TestEndToEndWorkflows:
             a.session_id = session_id
         db.save_alerts_batch(all_alerts)
 
-        exporter = Exporter()
+        exporter = Exporter(default_export_dir=temp_dir)
         export_file = os.path.join(temp_dir, "workflow_a.json")
         exporter.export_json(export_file, alerts=all_alerts, stats=stats, packets=processed_packets)
         assert os.path.exists(export_file)
@@ -108,7 +108,7 @@ class TestEndToEndWorkflows:
         stats = loader.get_stats()
         assert stats.total_packets == 2
 
-        exporter = Exporter()
+        exporter = Exporter(default_export_dir=temp_dir)
         reexport_path = os.path.join(temp_dir, "workflow_b_reexport.pcap")
         exporter.export_pcap(reexport_path, loaded_packets)
         assert os.path.exists(reexport_path)
@@ -130,7 +130,7 @@ class TestEndToEndWorkflows:
         loaded = loader.load(pcap_path)
 
         csv_path = os.path.join(temp_dir, "workflow_c.csv")
-        exporter = Exporter()
+        exporter = Exporter(default_export_dir=temp_dir)
         exporter.export_csv(csv_path, packets=loaded)
 
         assert os.path.exists(csv_path)
@@ -155,7 +155,7 @@ class TestEndToEndWorkflows:
         stats = loader.get_stats()
 
         json_path = os.path.join(temp_dir, "workflow_d.json")
-        exporter = Exporter()
+        exporter = Exporter(default_export_dir=temp_dir)
         exporter.export_json(json_path, packets=loaded, stats=stats)
 
         importer = Importer(db)

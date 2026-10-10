@@ -80,7 +80,7 @@ class Importer:
         if "hosts" in data and not isinstance(data["hosts"], list):
             return False, "'hosts' section must be an array/list."
 
-        if "stats" in data and not isinstance(data["stats"], dict):
+        if "stats" in data and data["stats"] is not None and not isinstance(data["stats"], dict):
             return False, "'stats' section must be an object/dictionary."
 
         if "metadata" in data and not isinstance(data["metadata"], dict):

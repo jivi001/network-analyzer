@@ -89,6 +89,7 @@ class TestExporterDeepBranches:
         assert fname.endswith(".pcap")
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            exporter = Exporter(default_export_dir=tmpdir)
             csv_path = os.path.join(tmpdir, "alerts_only.csv")
             alerts = [
                 AlertInfo(id=1, timestamp_str="12:00:00", severity="HIGH", rule_name="Test Rule", message="Alert msg", src_ip="1.1.1.1", dst_ip="2.2.2.2", dst_port=80, protocol="TCP")
@@ -98,8 +99,8 @@ class TestExporterDeepBranches:
             assert os.path.exists(csv_path)
 
     def test_exporter_pcap_with_scapy_layer_packets(self):
-        exporter = Exporter()
         with tempfile.TemporaryDirectory() as tmpdir:
+            exporter = Exporter(default_export_dir=tmpdir)
             pcap_path = os.path.join(tmpdir, "scapy_raw.pcap")
             scapy_packet = IP(src="192.168.1.1", dst="192.168.1.2")/TCP(sport=1234, dport=80)
             exporter.export_pcap(pcap_path, raw_packets=[scapy_packet])

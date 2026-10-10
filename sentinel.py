@@ -522,11 +522,11 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
                             elif key == 'e':
                                 live.stop()
                                 screen_manager.set_state(ScreenState.TASK_CONFIG)
-                                exporter = Exporter()
                                 export_dir = config.get("export_directory", "exports")
+                                exporter = Exporter(default_export_dir=export_dir, allow_absolute=False)
                                 filename = exporter.generate_filename("capture", "json")
                                 try:
-                                    filepath = exporter.validate_export_path(filename, export_dir)
+                                    filepath = exporter.validate_export_path(filename, export_dir, allow_absolute=False)
                                     exporter.export_json(
                                         filepath,
                                         alerts=alert_manager.get_all(),
@@ -610,15 +610,15 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     if snapshot.total_packets > 0 and Confirm.ask("Export capture data?", default=False, console=console):
         export_settings = prompt_export_settings()
         if export_settings:
-            exporter = Exporter()
             export_dir = config.get("export_directory", "exports")
+            exporter = Exporter(default_export_dir=export_dir, allow_absolute=False)
 
             fmt = export_settings.get("format", "csv").lower()
             default_fn = exporter.generate_filename("capture", fmt)
             user_fn = export_settings.get("filename", "").strip() or default_fn
 
             try:
-                filepath = exporter.validate_export_path(user_fn, export_dir)
+                filepath = exporter.validate_export_path(user_fn, export_dir, allow_absolute=False)
 
                 if fmt == "csv":
                     exporter.export_csv(filepath, packets=list(packet_buffer), stats=snapshot)
@@ -770,14 +770,14 @@ def run_pcap_analysis(config: dict, db: Database, privacy: PrivacyFilter):
     if packets and Confirm.ask("Export analysis report?", default=False, console=console):
         export_settings = prompt_export_settings()
         if export_settings:
-            exporter = Exporter()
             export_dir = config.get("export_directory", "exports")
+            exporter = Exporter(default_export_dir=export_dir, allow_absolute=False)
             fmt = export_settings.get("format", "csv").lower()
             default_fn = exporter.generate_filename("pcap_analysis", fmt)
             user_fn = export_settings.get("filename", "").strip() or default_fn
 
             try:
-                out_path = exporter.validate_export_path(user_fn, export_dir)
+                out_path = exporter.validate_export_path(user_fn, export_dir, allow_absolute=False)
                 if fmt == "csv":
                     exporter.export_csv(out_path, packets=packets, stats=stats_snapshot)
                 elif fmt == "json":
