@@ -15,7 +15,7 @@ class Database:
     def __init__(self, db_path: str = "sentinel_data.db"):
         """Create/open SQLite database with WAL mode."""
         import os
-        if not os.path.isabs(db_path):
+        if db_path != ":memory:" and not os.path.isabs(db_path):
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             db_path = os.path.abspath(os.path.join(base_dir, db_path))
         self.db_path = db_path
@@ -24,19 +24,38 @@ class Database:
         self._all_connections: List[sqlite3.Connection] = []
         self._create_tables()
 
+    @staticmethod
+    def _is_conn_open(c: sqlite3.Connection) -> bool:
+        try:
+            c.execute("SELECT 1")
+            return True
+        except Exception:
+            return False
+
     @property
     def conn(self) -> sqlite3.Connection:
-        if not hasattr(self._local, "conn"):
-            conn = sqlite3.connect(
-                self.db_path, check_same_thread=False, timeout=5.0
-            )
-            conn.row_factory = sqlite3.Row
+        current_conn = getattr(self._local, "conn", None)
+        if current_conn is not None:
+            if self._is_conn_open(current_conn):
+                return current_conn
+            self._local.conn = None
+
+        conn = sqlite3.connect(
+            self.db_path, check_same_thread=False, timeout=5.0
+        )
+        conn.row_factory = sqlite3.Row
+        try:
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA foreign_keys=ON")
-            conn.execute("PRAGMA busy_timeout=5000")
-            self._local.conn = conn
-            with self.lock:
-                self._all_connections.append(conn)
+        except sqlite3.OperationalError:
+            pass  # Fall back to default journal mode on read-only/restricted environments
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
+        self._local.conn = conn
+        with self.lock:
+            self._all_connections = [
+                c for c in self._all_connections if self._is_conn_open(c)
+            ]
+            self._all_connections.append(conn)
         return self._local.conn
 
     def _safe_json_loads(self, val, default=None):
@@ -536,6 +555,16 @@ class Database:
             res.append(si)
         return res
 
+    def close_current_thread_connection(self):
+        """Close database connection for the calling thread."""
+        current_conn = getattr(self._local, "conn", None)
+        if current_conn is not None:
+            try:
+                current_conn.close()
+            except Exception:
+                pass
+            self._local.conn = None
+
     def close_all(self):
         """Close all tracked database connections across threads."""
         with self.lock:
@@ -546,7 +575,7 @@ class Database:
                     pass
             self._all_connections.clear()
         if hasattr(self._local, "conn"):
-            del self._local.conn
+            self._local.conn = None
 
     def close(self):
         """Close the database connections."""

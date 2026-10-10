@@ -81,13 +81,15 @@ class PacketSniffer:
         with self.lock:
             self._state = CaptureState.RUNNING
         try:
-            scapy.sniff(
-                iface=interface,
-                filter=self.bpf_filter if self.bpf_filter else None,
-                prn=self._process_packet,
-                stop_filter=lambda p: not self.running.is_set(),
-                store=0,
-            )
+            while self.running.is_set():
+                scapy.sniff(
+                    iface=interface,
+                    filter=self.bpf_filter if self.bpf_filter else None,
+                    prn=self._process_packet,
+                    stop_filter=lambda p: not self.running.is_set(),
+                    store=0,
+                    timeout=0.5,
+                )
         except Exception as e:
             err_msg = f"Sniffer error: {e}"
             logger.error(err_msg)
@@ -110,15 +112,17 @@ class PacketSniffer:
                 logger.debug(f"Packet callback error: {e}")
 
     def stop(self):
-        """Stops the packet sniffer."""
+        """Stops the packet sniffer deterministically."""
         with self.lock:
             self._state = CaptureState.STOPPING
             self.running.clear()
             thread = self.thread
         if thread and thread.is_alive():
-            thread.join(timeout=2.0)
+            thread.join(timeout=3.0)
         with self.lock:
-            if self._state != CaptureState.ERROR:
+            if thread and thread.is_alive():
+                logger.warning("Sniffer capture thread did not terminate within timeout.")
+            elif self._state != CaptureState.ERROR:
                 self._state = CaptureState.STOPPED
 
     def set_filter(self, bpf_filter: str):
@@ -135,5 +139,5 @@ class PacketSniffer:
 
     def is_running(self) -> bool:
         """Returns True if the sniffer is running."""
-        return self.running.is_set()
+        return self.running.is_set() and (self.thread is not None and self.thread.is_alive())
 

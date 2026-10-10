@@ -200,3 +200,25 @@ class TestTrafficLabComprehensive:
 
         with pytest.raises(ValueError, match="port must be"):
             validate(MockArgs(port=70000))
+
+    def test_rate_dispatched_runner_backpressure_and_queue_bounding(self):
+        """Verify that when worker pool is saturated, tasks are bounded and rejected with backpressure."""
+        c = Counters()
+        stop_event = threading.Event()
+
+        # Slow task that blocks to saturate worker pool and queue
+        def slow_task():
+            time.sleep(0.1)
+
+        # Dispatch 200 tasks/sec with only 2 workers and queue capacity 2
+        # Should rapidly saturate and trigger rejections
+        rate_dispatched_runner(
+            slow_task,
+            duration=0.2,
+            rate=200,
+            c=c,
+            stop=stop_event,
+            max_workers=2,
+            max_queue=2,
+        )
+        assert c.rejected > 0, "Saturated runner must record controlled task rejections under backpressure"

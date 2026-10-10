@@ -1,0 +1,53 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /home/exu0/cybersecurity/Programs/network-analyzer/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/exu0/cybersecurity/Programs/network-analyzer
+configfile: pyproject.toml
+plugins: cov-7.1.0
+collecting ... collected 43 items
+
+tests/test_coverage_sentinel_cli.py::TestSentinelCliAndConfig::test_get_absolute_path_and_validate_config PASSED [  2%]
+tests/test_coverage_sentinel_cli.py::TestSentinelCliAndConfig::test_setup_logging_with_config PASSED [  4%]
+tests/test_coverage_sentinel_cli.py::TestSentinelCliAndConfig::test_load_config_with_custom_file_and_defaults PASSED [  6%]
+tests/test_coverage_sentinel_cli.py::TestSentinelCliAndConfig::test_validate_bpf_filter_all_branches PASSED [  9%]
+tests/test_coverage_sentinel_cli.py::TestSentinelLiveCaptureWorkflow::test_run_live_capture_cancel_and_invalid_inputs PASSED [ 11%]
+tests/test_coverage_sentinel_cli.py::TestSentinelLiveCaptureWorkflow::test_run_live_capture_execution_and_flush PASSED [ 13%]
+tests/test_coverage_sentinel_cli.py::TestSentinelLiveCaptureWorkflow::test_run_live_capture_temp_pcap_guaranteed_cleanup PASSED [ 16%]
+tests/test_coverage_sentinel_cli.py::TestSentinelScanAndPcapWorkflows::test_run_network_scan_workflow_complete PASSED [ 18%]
+tests/test_coverage_sentinel_cli.py::TestSentinelScanAndPcapWorkflows::test_run_pcap_analysis_workflow_complete PASSED [ 20%]
+tests/test_coverage_sentinel_cli.py::TestSentinelHistoryAndSettings::test_run_history_viewer_all_options PASSED [ 23%]
+tests/test_coverage_sentinel_cli.py::TestSentinelHistoryAndSettings::test_run_settings_menu_toggle PASSED [ 25%]
+tests/test_coverage_sentinel_cli.py::TestSentinelMainEntrypoint::test_main_cli_flags_capture_scan_pcap PASSED [ 27%]
+tests/test_coverage_sentinel_cli.py::TestSentinelMainEntrypoint::test_main_interactive_menu_loop_and_exit PASSED [ 30%]
+tests/test_coverage_sentinel_cli.py::TestSentinelMainEntrypoint::test_main_keyboard_interrupt_graceful_exit PASSED [ 32%]
+tests/test_coverage_traffic_lab_comprehensive.py::TestTrafficLabComprehensive::test_http_get_scheme_enforcement_and_success PASSED [ 34%]
+tests/test_coverage_traffic_lab_comprehensive.py::TestTrafficLabComprehensive::test_dns_query_packet_generation PASSED [ 37%]
+tests/test_coverage_traffic_lab_comprehensive.py::TestTrafficLabComprehensive::test_do_tcp_action_error_classification PASSED [ 39%]
+tests/test_coverage_traffic_lab_comprehensive.py::TestTrafficLabComprehensive::test_do_udp_action_ipv4_and_ipv6 PASSED [ 41%]
+tests/test_coverage_traffic_lab_comprehensive.py::TestTrafficLabComprehensive::test_rate_dispatched_runner_and_cancellation PASSED [ 44%]
+tests/test_coverage_traffic_lab_comprehensive.py::TestTrafficLabComprehensive::test_internet_and_local_or_lan_dispatchers PASSED [ 46%]
+tests/test_coverage_traffic_lab_comprehensive.py::TestTrafficLabComprehensive::test_stats_loop_output_rendering PASSED [ 48%]
+tests/test_coverage_traffic_lab_comprehensive.py::TestTrafficLabComprehensive::test_validation_all_error_paths PASSED [ 51%]
+tests/test_coverage_traffic_lab_comprehensive.py::TestTrafficLabComprehensive::test_rate_dispatched_runner_backpressure_and_queue_bounding PASSED [ 53%]
+tests/test_unit_core.py::TestCoreStatsAggregator::test_initial_state PASSED [ 55%]
+tests/test_unit_core.py::TestCoreStatsAggregator::test_packet_recording_and_window_calculation PASSED [ 58%]
+tests/test_unit_core.py::TestCoreStatsAggregator::test_top_conversations_and_hosts PASSED [ 60%]
+tests/test_unit_core.py::TestCorePacketProcessor::test_process_ipv4_tcp_packet PASSED [ 62%]
+tests/test_unit_core.py::TestCorePacketProcessor::test_process_ipv6_udp_dns_packet PASSED [ 65%]
+tests/test_unit_core.py::TestCorePacketProcessor::test_process_arp_packet PASSED [ 67%]
+tests/test_unit_core.py::TestCorePacketProcessor::test_process_icmp_packet PASSED [ 69%]
+tests/test_unit_core.py::TestCorePacketProcessor::test_process_malformed_or_non_packet PASSED [ 72%]
+tests/test_unit_core.py::TestCoreSniffer::test_sniffer_state_and_lifecycle PASSED [ 74%]
+tests/test_unit_core.py::TestCoreNetworkScanner::test_validate_target_allowlist PASSED [ 76%]
+tests/test_unit_core.py::TestCoreNetworkScanner::test_scan_profile_arguments_and_fallback PASSED [ 79%]
+tests/test_unit_core.py::TestCorePcapLoader::test_load_synthetic_pcap PASSED [ 81%]
+tests/test_unit_core.py::TestCorePcapLoader::test_load_empty_or_missing_pcap PASSED [ 83%]
+tests/test_unit_core.py::TestCorePcapLoader::test_stream_synthetic_pcap_and_bounded_load PASSED [ 86%]
+tests/test_unit_storage_database.py::TestStorageDatabase::test_session_lifecycle PASSED [ 88%]
+tests/test_unit_storage_database.py::TestStorageDatabase::test_alerts_batch_and_filtering PASSED [ 90%]
+tests/test_unit_storage_database.py::TestStorageDatabase::test_hosts_save_and_update PASSED [ 93%]
+tests/test_unit_storage_database.py::TestStorageDatabase::test_search_sessions_and_packets PASSED [ 95%]
+tests/test_unit_storage_database.py::TestStorageExporter::test_validate_export_path_traversal_rejection PASSED [ 97%]
+tests/test_unit_storage_database.py::TestStorageExporter::test_export_csv_packets_and_alerts PASSED [100%]
+
+============================== 43 passed in 2.16s ==============================
