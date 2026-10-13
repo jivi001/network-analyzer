@@ -655,7 +655,20 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
             screen_manager.set_state(ScreenState.TASK_COMPLETE)
 
         console.print()
-        console.print(f"[bold green]Capture stopped.[/bold green]")
+        if sniffer.last_error:
+            from rich.markup import escape
+            console.print(f"[bold red]Capture stopped with error:[/bold red] {escape(sniffer.last_error)}")
+            err_lower = sniffer.last_error.lower()
+            if "operation not permitted" in err_lower or "permission denied" in err_lower:
+                console.print(
+                    "\n[bold yellow]Privilege Requirement Notice:[/bold yellow]\n"
+                    "  Raw packet sniffing requires elevated privileges on Linux.\n"
+                    "  • Run with sudo: [bold cyan]sudo ./run.sh[/bold cyan] or [bold cyan]sudo $(which sentinel)[/bold cyan]\n"
+                    "  • Or assign network capabilities:\n"
+                    "    [bold cyan]sudo setcap cap_net_raw,cap_net_admin=eip $(readlink -f .venv/bin/python)[/bold cyan]\n"
+                )
+        else:
+            console.print(f"[bold green]Capture stopped.[/bold green]")
         console.print(
             f"  Captured: {captured_count[0]:,} | Processed: {processed_count[0]:,} | "
             f"Bytes: {format_bytes(snapshot.total_bytes)} | Alerts: {alert_manager.get_count():,}"
