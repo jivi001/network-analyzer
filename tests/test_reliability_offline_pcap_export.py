@@ -216,9 +216,9 @@ class TestFormatSpecificExporter:
 
     def test_export_pcap_binary_validity(self, sample_data):
         packets, _, _, _ = sample_data
-        exporter = Exporter()
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            exporter = Exporter(default_export_dir=tmpdir)
             out_pcap = os.path.join(tmpdir, "test_out.pcap")
             exporter.export_pcap(out_pcap, packets)
 
@@ -233,9 +233,9 @@ class TestFormatSpecificExporter:
 
     def test_export_csv_validity(self, sample_data):
         packets, alerts, _, stats = sample_data
-        exporter = Exporter()
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            exporter = Exporter(default_export_dir=tmpdir)
             out_csv = os.path.join(tmpdir, "test_out.csv")
             exporter.export_csv(out_csv, packets=packets, stats=stats)
 
@@ -250,9 +250,9 @@ class TestFormatSpecificExporter:
 
     def test_export_json_validity(self, sample_data):
         packets, alerts, hosts, stats = sample_data
-        exporter = Exporter()
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            exporter = Exporter(default_export_dir=tmpdir)
             out_json = os.path.join(tmpdir, "test_out.json")
             exporter.export_json(out_json, alerts=alerts, stats=stats, hosts=hosts, packets=packets)
 

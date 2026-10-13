@@ -6,6 +6,7 @@ import tempfile
 import threading
 import queue
 from datetime import datetime
+from unittest.mock import patch
 from scapy.all import Ether, IP, TCP, UDP, ICMP, ARP, DNS, DNSQR
 
 # Subsystem imports
@@ -184,15 +185,17 @@ class CompleteEndToEndValidationTests(unittest.TestCase):
         sniffer = PacketSniffer()
         self.assertEqual(sniffer.state, CaptureState.IDLE)
 
-        # Execute 50 rapid start/stop cycles
-        for i in range(50):
-            sniffer.start(callback=lambda p: None)
-            time.sleep(0.01)
-            self.assertTrue(sniffer.is_running())
-            sniffer.stop()
-            time.sleep(0.01)
-            self.assertFalse(sniffer.is_running())
-            self.assertEqual(sniffer.state, CaptureState.STOPPED)
+        # Mock scapy.all.sniff to prevent EPERM on unprivileged test environments
+        with patch("scapy.all.sniff", side_effect=lambda **kw: time.sleep(0.005)):
+            # Execute 50 rapid start/stop cycles
+            for i in range(50):
+                sniffer.start(callback=lambda p: None)
+                time.sleep(0.01)
+                self.assertTrue(sniffer.is_running())
+                sniffer.stop()
+                time.sleep(0.01)
+                self.assertFalse(sniffer.is_running())
+                self.assertEqual(sniffer.state, CaptureState.STOPPED)
 
     # 6. Detection Pipeline & Failure Isolation
     def test_detection_pipeline_failure_isolation(self):
@@ -273,11 +276,10 @@ class CompleteEndToEndValidationTests(unittest.TestCase):
         self.assertEqual(saved_session.packet_count, 1000)
         self.assertEqual(saved_session.alert_count, 2)
 
-    # 9. Exporter & Importer Security & Validation
     def test_exporter_importer_path_traversal_and_validation(self):
-        exporter = Exporter()
         export_dir = os.path.join(self.temp_dir, "exports")
         os.makedirs(export_dir, exist_ok=True)
+        exporter = Exporter(default_export_dir=export_dir)
 
         # Valid export path
         valid_path = exporter.validate_export_path("test_export.json", export_dir)

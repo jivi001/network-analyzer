@@ -15,6 +15,7 @@ from sentinel import (
     get_absolute_path,
     _validate_config,
     load_config,
+    setup_logging,
     validate_bpf_filter,
     run_live_capture,
     run_network_scan,
@@ -41,13 +42,17 @@ class TestSentinelCliAndConfig:
         # 3. Relative path
         assert os.path.isabs(get_absolute_path("sentinel_data.db"))
 
-        # 4. _validate_config with out of bound integers
+        # 4. _validate_config with out of bound integers, floats, and booleans
         bad_cfg = {
             "packet_buffer_size": -5,  # Min 10
             "packet_queue_size": "invalid_int",  # Reset to default
             "refresh_fps": 100,  # Max 30
             "dedup_window": 0,  # Min 1
             "max_alerts": 5,  # Min 10
+            "dns_entropy_threshold": 12.0,  # Max 8.0 -> default 3.5
+            "beacon_interval_tolerance": "not_a_float",  # -> default 5.0
+            "privacy_mask": "yes",  # -> True
+            "enable_whois": "false",  # -> False
             "database_path": "",
             "export_directory": "",
             "rules_directory": "",
@@ -58,9 +63,18 @@ class TestSentinelCliAndConfig:
         assert validated["refresh_fps"] == 10
         assert validated["dedup_window"] == 60
         assert validated["max_alerts"] == 100
+        assert validated["dns_entropy_threshold"] == 3.5
+        assert validated["beacon_interval_tolerance"] == 5.0
+        assert validated["privacy_mask"] is True
+        assert validated["enable_whois"] is False
         assert "sentinel_data.db" in validated["database_path"]
         assert "exports" in validated["export_directory"]
         assert "rules" in validated["rules_directory"]
+
+    def test_setup_logging_with_config(self, tmp_path):
+        custom_log = str(tmp_path / "custom_sentinel.log")
+        setup_logging({"level": "DEBUG", "log_file": custom_log})
+        assert os.path.exists(custom_log)
 
     def test_load_config_with_custom_file_and_defaults(self):
         # 1. Default config load
@@ -148,6 +162,28 @@ class TestSentinelLiveCaptureWorkflow:
 
             db.create_session.assert_called_once()
             db.end_session.assert_called_once()
+
+    def test_run_live_capture_temp_pcap_guaranteed_cleanup(self):
+        db = MagicMock(spec=Database)
+        priv = PrivacyFilter(enabled=False)
+        created_temp_files = []
+
+        orig_mkstemp = tempfile.mkstemp
+
+        def spy_mkstemp(*args, **kwargs):
+            fd, path = orig_mkstemp(*args, **kwargs)
+            created_temp_files.append(path)
+            return fd, path
+
+        with patch("tempfile.mkstemp", side_effect=spy_mkstemp), \
+             patch("sentinel.prompt_capture_settings", return_value={"interface": "lo", "target_ip": "", "bpf_filter": ""}), \
+             patch("sentinel.PacketSniffer.start", side_effect=RuntimeError("Sniffer start simulated failure")), \
+             patch("rich.prompt.Prompt.ask", return_value=""):
+            run_live_capture({}, db, priv)
+
+        assert len(created_temp_files) == 1
+        # The temporary pcap file must have been deleted by the outer finally block
+        assert not os.path.exists(created_temp_files[0])
 
 
 class TestSentinelScanAndPcapWorkflows:
@@ -248,13 +284,13 @@ class TestSentinelHistoryAndSettings:
 class TestSentinelMainEntrypoint:
     def test_main_cli_flags_capture_scan_pcap(self):
         # 1. Direct Capture mode
-        with patch("sys.argv", ["sentinel", "--capture", "--no-admin-check"]), \
+        with patch("sys.argv", ["sentinel", "--capture", "--no-admin-check", "--db", ":memory:"]), \
              patch("sentinel.run_live_capture") as mock_cap:
             main()
             mock_cap.assert_called_once()
 
         # 2. Direct Scan mode
-        with patch("sys.argv", ["sentinel", "--scan", "192.168.1.1", "--profile", "service", "--no-admin-check"]), \
+        with patch("sys.argv", ["sentinel", "--scan", "192.168.1.1", "--profile", "service", "--no-admin-check", "--db", ":memory:"]), \
              patch("sentinel.check_nmap_installed", return_value=True), \
              patch("sentinel.NetworkScanner.scan", return_value=ScanResult(target="192.168.1.1", hosts=[])), \
              patch("sentinel.display_scan_progress"), \
@@ -262,17 +298,17 @@ class TestSentinelMainEntrypoint:
             main()
 
         # 3. Direct PCAP mode
-        with patch("sys.argv", ["sentinel", "--pcap", "exports/test.pcap", "--no-admin-check"]), \
+        with patch("sys.argv", ["sentinel", "--pcap", "exports/test.pcap", "--no-admin-check", "--db", ":memory:"]), \
              patch("sentinel.run_pcap_analysis") as mock_pcap:
             main()
             mock_pcap.assert_called_once()
 
     def test_main_interactive_menu_loop_and_exit(self):
-        with patch("sys.argv", ["sentinel", "--no-admin-check"]), \
+        with patch("sys.argv", ["sentinel", "--no-admin-check", "--db", ":memory:"]), \
              patch("sentinel.show_main_menu", side_effect=["6"]):
             main()
 
     def test_main_keyboard_interrupt_graceful_exit(self):
-        with patch("sys.argv", ["sentinel", "--no-admin-check"]), \
+        with patch("sys.argv", ["sentinel", "--no-admin-check", "--db", ":memory:"]), \
              patch("sentinel.show_main_menu", side_effect=KeyboardInterrupt):
             main()

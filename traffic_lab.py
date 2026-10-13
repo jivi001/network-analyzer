@@ -12,12 +12,14 @@ import http.client
 import ipaddress
 import os
 import random
+import secrets
 import socket
 import ssl
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from typing import Optional
 from urllib.parse import urlparse
 
 MAX_DURATION = 15 * 60
@@ -36,6 +38,8 @@ class Counters:
     timeouts: int = 0
     refused: int = 0
     other_errors: int = 0
+    rejected: int = 0
+    cancelled: int = 0
     tx: int = 0
     rx: int = 0
     started: float = field(default_factory=time.monotonic)
@@ -61,9 +65,19 @@ class Counters:
             else:
                 self.other_errors += 1
 
+    def reject(self):
+        with self.lock:
+            self.rejected += 1
+            self.failures += 1
+            self.other_errors += 1
+
+    def cancel(self):
+        with self.lock:
+            self.cancelled += 1
+
 
 def dns_query(server, hostname="www.example.com") -> int:
-    tid = random.randrange(65536)
+    tid = secrets.randbelow(65536)
     qname = b"".join(bytes([len(x)]) + x.encode() for x in hostname.split(".")) + b"\0"
     packet = (tid.to_bytes(2, "big") + b"\x01\x00" + b"\x00\x01" +
               b"\x00\x00\x00\x00\x00\x00" + qname + b"\x00\x01\x00\x01")
@@ -149,19 +163,51 @@ def do_udp_action(target: str, port: int, c: Counters, size: int = 256):
         c.failure("error")
 
 
-def rate_dispatched_runner(task_fn, duration: float, rate: float, c: Counters, stop: threading.Event, max_workers: int = 32):
+def rate_dispatched_runner(
+    task_fn,
+    duration: float,
+    rate: float,
+    c: Counters,
+    stop: threading.Event,
+    max_workers: int = 32,
+    max_queue: Optional[int] = None,
+):
     """
-    Precision Token/Interval Dispatcher:
-    Schedules task execution at the exact configured rate using a bounded worker pool.
-    Prevents single-thread network RTT latency from bottlenecking target generation rate.
+    Precision Token/Interval Dispatcher with bounded concurrency & backpressure:
+    Schedules task execution at the configured rate using a bounded worker pool
+    and bounded task queue.
+    Prevents single-thread network RTT latency from bottlenecking target generation rate,
+    while bounding pending tasks and providing deterministic cancellation on shutdown.
     """
     interval = 1.0 / rate
     end_time = time.monotonic() + duration
     next_time = time.perf_counter()
+    queue_capacity = max_queue if max_queue is not None else max(16, max_workers * 2)
+    sem = threading.Semaphore(max_workers + queue_capacity)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    def wrapped_task():
+        try:
+            if stop.is_set():
+                c.cancel()
+                return
+            task_fn()
+        finally:
+            sem.release()
+
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    try:
         while time.monotonic() < end_time and not stop.is_set():
-            executor.submit(task_fn)
+            # Acquire semaphore with timeout to enforce bounded backlog and backpressure
+            acquired = sem.acquire(blocking=True, timeout=interval)
+            if not acquired:
+                # Queue saturated: record controlled rejection
+                c.reject()
+            else:
+                try:
+                    executor.submit(wrapped_task)
+                except RuntimeError:
+                    sem.release()
+                    break
 
             next_time += interval
             sleep_time = next_time - time.perf_counter()
@@ -170,6 +216,8 @@ def rate_dispatched_runner(task_fn, duration: float, rate: float, c: Counters, s
             elif sleep_time < -0.5:
                 # Reset if accumulated drift exceeds 500ms
                 next_time = time.perf_counter()
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def internet(duration: float, rate: float, c: Counters, stop: threading.Event):

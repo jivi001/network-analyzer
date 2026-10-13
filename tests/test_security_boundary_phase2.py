@@ -223,13 +223,18 @@ class TestExportPathContainmentPhase2(unittest.TestCase):
         with tempfile.TemporaryDirectory() as safe_tmp:
             safe_target = os.path.join(safe_tmp, "packets.csv")
 
-            # With default allow_absolute=True, safe temp paths pass
-            res = self.exporter.validate_export_path(safe_target)
+            # Default policy (allow_absolute=False): absolute path outside export_dir is rejected
+            with self.assertRaises(ValueError):
+                self.exporter.validate_export_path(safe_target)
+
+            # Explicit opt-in at trusted boundary: allow_absolute=True permits safe external destination
+            res = self.exporter.validate_export_path(safe_target, allow_absolute=True)
             self.assertEqual(res, str(Path(safe_target).resolve()))
 
-            # With allow_absolute=False, absolute path outside export_dir is rejected
-            with self.assertRaises(ValueError):
-                self.exporter.validate_export_path(safe_target, allow_absolute=False)
+            # Absolute path inside the configured export_dir is permitted by default
+            inside_target = str((Path(safe_tmp) / "inside.csv").resolve())
+            res_inside = self.exporter.validate_export_path(inside_target, export_dir=safe_tmp)
+            self.assertEqual(res_inside, inside_target)
 
     def test_prohibited_system_directories_rejected(self):
         """Verify attempts to target root and system directories are rejected."""
@@ -273,6 +278,26 @@ class TestExportPathContainmentPhase2(unittest.TestCase):
 
             # Ensure the unauthorized directory was NEVER created
             self.assertFalse(non_existent_evil.exists(), "Unauthorized directory must not be created on failure")
+
+    def test_nested_sibling_directory_collision_rejected(self):
+        """Verify deeply nested sibling directory collisions (exports_evil/nested/file.csv) are rejected."""
+        with tempfile.TemporaryDirectory() as parent_tmp:
+            base_exports = Path(parent_tmp) / "exports"
+            base_exports.mkdir()
+            evil_sibling = Path(parent_tmp) / "exports_evil"
+            evil_sibling.mkdir()
+            evil_nested = evil_sibling / "nested"
+            evil_nested.mkdir()
+
+            evil_target = str(evil_nested / "loot.csv")
+
+            # Must be rejected with allow_absolute=False (default)
+            with self.assertRaises(ValueError):
+                self.exporter.validate_export_path(evil_target, export_dir=str(base_exports), allow_absolute=False)
+
+            # Must also be rejected even with allow_absolute=True opt-in
+            with self.assertRaises(ValueError):
+                self.exporter.validate_export_path(evil_target, export_dir=str(base_exports), allow_absolute=True)
 
 
 if __name__ == "__main__":

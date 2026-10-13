@@ -39,6 +39,14 @@ def resolve_path(raw_input: str) -> Optional[Path]:
     if not cleaned:
         return None
     try:
+        # On POSIX systems, normalize Windows-style backslashes
+        if os.name != "nt" and "\\" in cleaned:
+            import re
+            m = re.match(r"^([a-zA-Z]):[\\/](.*)", cleaned)
+            if m:
+                cleaned = "/" + m.group(2).replace("\\", "/")
+            else:
+                cleaned = cleaned.replace("\\", "/")
         path_obj = Path(cleaned).expanduser()
         return path_obj
     except Exception:

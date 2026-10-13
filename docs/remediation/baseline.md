@@ -2,9 +2,9 @@
 
 **Document:** Baseline State & Environment Assessment  
 **Project:** `jivi001/network-analyzer` (`my-sentinel`)  
-**Capture Timestamp:** 2026-10-10T16:15:40+05:30  
+**Capture Timestamp:** 2026-10-10T17:28:00+05:30  
 **Phase:** Phase 0 (Baseline Establishment)  
-**Status:** Complete — Ready for Phase 1  
+**Status:** Complete — Ready for Phase 0 Acceptance & Phase 1  
 
 ---
 
@@ -14,34 +14,28 @@
 |---|---|
 | **Remote Repository URL** | `https://github.com/jivi001/network-analyzer.git` |
 | **Local Repository Path** | `/home/exu0/cybersecurity/Programs/network-analyzer` |
-| **Current Git Branch** | `main` |
+| **Current Git Branch** | `fix/p0-p1-p2-remediation` |
 | **Tracking Upstream** | `origin/main` (Synchronized, up to date) |
-| **Full HEAD Commit SHA** | `66c7b254ac52c14110406c623ea79447ca2f0cd7` |
-| **Latest Commit Summary** | `harden XML handling and synchronize build configuration` |
-| **Commit Author** | `jivi001 <jiviteshgd28@gmail.com>` |
-| **Commit Date** | `Sat Sep 12 15:23:15 2026 +0530` |
+| **Full HEAD Commit SHA** | `0d2ee14fe3c2924b5b1d534283e3f9b76b5d883c` |
+| **Latest Commit Summary** | `Merge pull request #1 from jivi001/remediation/phase-1-export-correctness` |
+| **Parent Commits** | `66c7b254ac52c14110406c623ea79447ca2f0cd7`, `f64838bac69c9a7a7816ca52e433c51abaecd48f` |
 
 ---
 
 ## 2. Working-Tree Safety & Git State
 
-Non-destructive Git status check before Phase 0 artifacts:
+Non-destructive Git status check before baseline establishment:
 
 ```text
-On branch main
+On branch fix/p0-p1-p2-remediation
 Your branch is up to date with 'origin/main'.
-
 nothing to commit, working tree clean
 ```
 
 - **Staged Changes:** None.
 - **Unstaged Changes:** None.
-- **Untracked Files:** None (prior to Phase 0 documentation generation).
-- **Existing Remediation Artifacts:** None found in repository prior to Phase 0.
-
-### Branch Decision
-- **Decision:** Maintained current branch (`main`) for baseline establishment.
-- **Rationale:** The working tree is clean. To strictly prevent premature branch divergence before remediation begins, no temporary branches were created. A dedicated remediation branch (e.g. `remediation/phase-1-fixes`) will be branched cleanly from `66c7b254ac52c14110406c623ea79447ca2f0cd7` at the start of Phase 1.
+- **Untracked Files:** None.
+- **Branch Strategy:** Dedicated branch `fix/p0-p1-p2-remediation` created tracking `origin/main`.
 
 ---
 
@@ -53,16 +47,9 @@ nothing to commit, working tree clean
 | **Kernel & Architecture** | `7.1.13+parrot7-amd64 #1 SMP PREEMPT_DYNAMIC` / `x86_64` |
 | **Git Version** | `git version 2.47.3` |
 | **System Python** | `/usr/bin/python3` (Python 3.13.5) |
-| **Test Runner Environment** | `/tmp/sentinel-venv/bin/python3` (Python 3.13.5) |
-| **Test Framework** | `pytest 9.1.1` (`pluggy 1.6.0`, `cov 7.1.0`, `platformdirs 4.12.4`, `anyio 4.15.1`) |
+| **Test Runner Environment** | `uv run --extra dev pytest` (CPython 3.13.5, `.venv`) |
+| **Test Framework** | `pytest 9.1.1` (`pluggy 1.6.0`, `cov 7.1.0`) |
 | **Dependency Manifests** | `pyproject.toml` (653 B), `requirements.txt` (70 B), `uv.lock` (128,870 B) |
-
-### Environmental Constraints & Limitations
-1. **System Python Isolation:** The host `/usr/bin/python3` does not include `pytest` or project dependencies globally. Tests were executed via an isolated, temporary virtual environment in `/tmp/sentinel-venv` without modifying the project's working tree or files.
-2. **Read-Only / Container Sandbox Constraints:** When executed under a strict read-only filesystem sandbox:
-   - Module import side effect at `sentinel.py:102` (`os.makedirs(..., "logs")`) fails if `logs/` does not exist.
-   - Interactive database tests fail with `sqlite3.OperationalError: unable to open database file` if write access to `./sentinel_data.db` is denied.
-3. **Privilege Constraints:** Live raw packet capture requires root/UID 0 permissions. Tests that invoke live capture without mocking Scapy require elevated privileges or appropriate socket mocking.
 
 ---
 
@@ -70,76 +57,55 @@ nothing to commit, working tree clean
 
 - **Exact Test Command:**
   ```bash
-  PYTHONPATH=. /tmp/sentinel-venv/bin/pytest tests/ -v
+  uv run --extra dev pytest -v
   ```
-- **Execution Start:** 2026-10-10T16:15:34+05:30
-- **Execution Complete:** 2026-10-10T16:15:40+05:30
-- **Exit Code:** `1` (Failures present)
-- **Total Tests Collected:** 254 across 31 test files
+- **Execution Timestamp:** 2026-10-10T17:27:50+05:30
+- **Exit Code:** `1` (Pre-existing test failures present)
+- **Total Tests Collected:** 276 across 33 test files
 - **Results:**
-  - **Passed:** 250
+  - **Passed:** 272
   - **Failed:** 4
   - **Skipped:** 0
   - **Errored:** 0
-  - **Total Duration:** 6.20 seconds
+  - **Total Duration:** 6.56 seconds
 - **Raw Evidence Log:** Saved at `docs/remediation/evidence/phase-0-pytest.log`
 
 ---
 
 ## 5. Detailed Test Failure Triage
 
-The 4 baseline test failures represent genuine pre-existing defects and test portability issues, not environment corruption:
+The 4 baseline test failures represent pre-existing defects and test portability issues:
 
 ### 1. `tests/test_coverage_privileges_and_env.py::TestPrivilegesAndEnvironment::test_check_privileges_windows_admin_and_non_admin`
 - **Failure:** `AttributeError: module 'ctypes' has no attribute 'windll'`
 - **Location:** `tests/test_coverage_privileges_and_env.py:24`
 - **Root Cause:** Test attempts to patch `"ctypes.windll.shell32.IsUserAnAdmin"` on a Linux host. On POSIX platforms, `ctypes` does not define `windll`, causing `unittest.mock.patch` to raise an `AttributeError` during target resolution.
-- **Classification:** Test portability defect (flawed platform mock).
+- **Classification:** Test portability defect (flawed platform mock). Scheduled for P2 maintainability.
 
 ### 2. `tests/test_coverage_stats_advanced.py::TestStatsAggregatorAdvanced::test_sample_process_memory_fallbacks`
-- **Failure:** `AssertionError: assert 122.33203125 == 0.0`
+- **Failure:** `AssertionError: assert 105.75 == 0.0`
 - **Location:** `tests/test_coverage_stats_advanced.py:43`
 - **Root Cause:** In `core/stats.py:_sample_process_memory_mb()`, lines 42–45:
-  ```python
-  else:
-      import resource
-      usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-      return (usage / 1024.0) if sys.platform == "darwin" else (usage / 1024.0)
-  ```
-  When the test patches `sys.platform = "unsupported_os"`, the `else` branch still successfully imports the POSIX `resource` module and returns actual memory usage instead of hitting an exception or returning `0.0`.
-- **Classification:** Application logic & test expectation mismatch.
+  When the test patches `sys.platform = "unsupported_os"`, the `else` branch still successfully imports the POSIX `resource` module and returns actual memory usage instead of returning `0.0`.
+- **Classification:** Application fallback logic & test expectation mismatch. Scheduled for P2 maintainability.
 
 ### 3. `tests/test_e2e_comprehensive_validation.py::CompleteEndToEndValidationTests::test_sniffer_repeated_start_stop_50_cycles`
 - **Failure:** `AssertionError: False is not true`
 - **Diagnostic Log:** `ERROR core.sniffer:sniffer.py:93 Sniffer error: [Errno 1] Operation not permitted`
 - **Location:** `tests/test_e2e_comprehensive_validation.py:191`
 - **Root Cause:** Test runs real Scapy sniffer cycles without administrative privileges (root/UID 0) and without mocking `scapy.sniff`. The OS socket creation fails with `EPERM` (Operation not permitted).
-- **Classification:** Integration test un-isolated from system privileges.
+- **Classification:** Integration test un-isolated from system privileges. Scheduled for P2 maintainability.
 
 ### 4. `tests/test_pcap_path_validation_and_ux.py::TestPathHelpers::test_resolve_pcap_path`
 - **Failure:** `AssertionError: assert 'exports\\test1.pcap' == 'test1.pcap'`
 - **Location:** `tests/test_pcap_path_validation_and_ux.py:44`
 - **Root Cause:** Test verifies Windows backslash path `"exports\\test1.pcap"`. On POSIX systems, backslash `\` is not a directory separator; `Path("exports\\test1.pcap").name` evaluates to `"exports\\test1.pcap"`.
-- **Classification:** Application cross-platform path normalization defect.
+- **Classification:** Application cross-platform path normalization defect. Scheduled for P2 maintainability.
 
 ---
 
-## 6. Files Created During Phase 0
+## 6. Files Created / Updated During Phase 0
 
-All Phase 0 artifacts were placed strictly in dedicated documentation locations without modifying application code or tests:
-
-1. `docs/remediation/baseline.md` — This evidence-based repository baseline report.
+1. `docs/remediation/baseline.md` — Repository baseline report.
 2. `docs/remediation/evidence/phase-0-pytest.log` — Verifiable, unmodified output of the baseline pytest run.
-3. `docs/remediation/defect-test-matrix.md` — Master defect-to-test mapping matrix for Phase 1 remediation.
-
----
-
-## 7. Readiness Assessment for Phase 1
-
-### Verdict: **READY FOR PHASE 1**
-
-**Evidence-Based Justification:**
-1. **Baseline Anchored:** Commit `66c7b254ac52c14110406c623ea79447ca2f0cd7` is clean, tracked, and verified.
-2. **Reproducible Test Baseline:** Exact test command, environment, and exit code (`1`) are documented with all 4 failures identified and categorized.
-3. **No Uncommitted User Changes:** No unstaged or untracked changes exist in the application source tree.
-4. **Scope Integrity Preserved:** Zero application files, tests, build configurations, or dependencies were altered during Phase 0.
+3. `docs/remediation/defect-test-matrix.md` — Master defect-to-test mapping matrix for P0/P1/P2 remediation.

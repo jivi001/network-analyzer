@@ -53,7 +53,7 @@ from utils.console import (
 from utils.privileges import check_privileges, check_nmap_installed, check_npcap_installed
 from utils.privacy import PrivacyFilter
 
-from storage.models import PacketInfo, SessionInfo, StatsSnapshot
+from storage.models import PacketInfo, SessionInfo, StatsSnapshot, AlertInfo
 from storage.database import Database
 from storage.exporter import Exporter
 
@@ -98,19 +98,43 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-# Configure file-based logging to prevent background threads from writing to stdout/stderr during TUI Live rendering
-os.makedirs(os.path.join(PROJECT_ROOT, "logs"), exist_ok=True)
-logging.basicConfig(
-    filename=os.path.join(PROJECT_ROOT, "logs", "sentinel.log"),
-    level=logging.WARNING,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    encoding="utf-8",
-)
+# Module logger with NullHandler to eliminate import-time filesystem and root logger side effects
+logger.addHandler(logging.NullHandler())
+
+
+def setup_logging(config: Optional[dict] = None) -> None:
+    """Explicit startup logging configuration."""
+    level_name = "WARNING"
+    log_file_setting = None
+    if config and isinstance(config, dict):
+        level_name = config.get("level", "WARNING")
+        log_file_setting = config.get("log_file")
+
+    level = getattr(logging, str(level_name).upper(), logging.WARNING)
+
+    log_dir = os.path.join(PROJECT_ROOT, "logs")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = (
+            get_absolute_path(log_file_setting)
+            if log_file_setting
+            else os.path.join(log_dir, "sentinel.log")
+        )
+        logging.basicConfig(
+            filename=log_file,
+            level=level,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            encoding="utf-8",
+            force=True,
+        )
+    except OSError as e:
+        # Fall back gracefully on read-only environments
+        logger.warning(f"Could not initialize file logging: {e}")
 
 
 def get_absolute_path(path_str: str) -> str:
     """Resolve a relative path against PROJECT_ROOT."""
-    if not path_str:
+    if not path_str or path_str == ":memory:":
         return path_str
     if os.path.isabs(path_str):
         return path_str
@@ -134,11 +158,45 @@ def _validate_config(config: dict) -> dict:
             val = default_val
         validated[key] = val
 
+    def _check_float(key: str, min_val: float, max_val: float, default_val: float):
+        val = validated.get(key, default_val)
+        if not isinstance(val, (int, float)) or isinstance(val, bool):
+            try:
+                val = float(val)
+            except (ValueError, TypeError):
+                logger.warning(f"Config '{key}' invalid. Resetting to {default_val}.")
+                val = default_val
+        if val < min_val or val > max_val:
+            logger.warning(f"Config '{key}' value {val} out of range [{min_val}, {max_val}]. Resetting to {default_val}.")
+            val = default_val
+        validated[key] = float(val)
+
+    def _check_bool(key: str, default_val: bool):
+        val = validated.get(key, default_val)
+        if not isinstance(val, bool):
+            if isinstance(val, str):
+                val = val.lower() in ("true", "1", "yes")
+            else:
+                val = bool(val)
+        validated[key] = val
+
     _check_int("packet_buffer_size", 10, 10000, 500)
     _check_int("packet_queue_size", 100, 100000, 10000)
     _check_int("refresh_fps", 1, 30, 10)
     _check_int("dedup_window", 1, 3600, 60)
     _check_int("max_alerts", 10, 100000, 100)
+    _check_int("timeout", 1, 3600, 300)
+    _check_int("dns_min_subdomain_length", 1, 255, 20)
+    _check_int("whois_cache_ttl", 1, 86400, 3600)
+
+    _check_float("dns_entropy_threshold", 0.0, 8.0, 3.5)
+    _check_float("beacon_interval_tolerance", 0.1, 60.0, 5.0)
+
+    _check_bool("privacy_mask", False)
+    _check_bool("enable_whois", True)
+    _check_bool("enable_rdns", True)
+    _check_bool("enable_traceroute", False)
+    _check_bool("json_include_payload", False)
 
     db_p = validated.get("database_path")
     if not isinstance(db_p, str) or not db_p.strip():
@@ -302,348 +360,352 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
     alert_lock = threading.Lock()
     pcap_lock = threading.Lock()
 
-    # Create temporary PCAP for streaming packets (no RAM accumulation)
-    temp_pcap_file = tempfile.NamedTemporaryFile(suffix=".pcap", delete=False)
-    temp_pcap_path = temp_pcap_file.name
-    temp_pcap_file.close()
-
-    pcap_writer = None
+    # Create temporary PCAP for streaming packets (restricted 0o600 permissions)
+    fd, temp_pcap_path = tempfile.mkstemp(suffix=".pcap")
+    os.close(fd)
     try:
-        import scapy.all as scapy
-        pcap_writer = scapy.PcapWriter(temp_pcap_path, sync=False)
-    except Exception as e:
-        logger.error(f"Failed to initialize PCAP streaming writer: {e}")
-        degraded_subsystems["pcap"] = "write_init_error"
-        pcap_errors_count[0] += 1
-
-    # Create session record
-    session = SessionInfo(
-        session_type="capture",
-        start_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        interface=interface or "auto",
-        filter_applied=bpf_filter,
-        status="active",
-    )
-    session_id = db.create_session(session)
-
-    def on_packet(raw_pkt):
-        """Capture callback: lightweight bounded queue enqueue only."""
-        captured_count[0] += 1
-        try:
-            packet_queue.put_nowait(raw_pkt)
-            enqueued_count[0] += 1
-        except Full:
-            queue_dropped_count[0] += 1
-
-    def flush_alert_batch():
-        """Flush accumulated alerts to database."""
-        nonlocal pending_alerts
-        with alert_lock:
-            if not pending_alerts:
-                return
-            batch_to_save = pending_alerts[:]
-            pending_alerts.clear()
-        try:
-            db.save_alerts_batch(batch_to_save)
-            degraded_subsystems.pop("db", None)
-        except Exception as e:
-            db_errors_count[0] += 1
-            logger.error(f"Database batch alert save error: {e}")
-            degraded_subsystems["db"] = "write_error"
-
-    # Dedicated Background Packet Processor Thread
-    processing_running = threading.Event()
-    processing_running.set()
-
-    def packet_processing_worker():
-        """
-        High-throughput worker thread continuously draining packet_queue into:
-        - Layer decoder (process_packet)
-        - StatsAggregator (EMA rate, protocols, top talkers)
-        - DetectionPipeline (rules, entropy, ARP, port scans)
-        - PCAP Streaming Writer (disk-backed)
-        - Recent packets buffer (bounded deque for TUI display)
-        - Alert batch queue (batched SQLite persistence)
-        """
-        while processing_running.is_set() or not packet_queue.empty():
-            try:
-                raw_pkt = packet_queue.get(timeout=0.05)
-            except Empty:
-                continue
-
-            try:
-                processed_count[0] += 1
-                pkt_info = process_packet(raw_pkt, processed_count[0])
-
-                if pkt_info is not None:
-                    # 1. Update stats
-                    stats.update(pkt_info)
-
-                    # 2. Evaluate detection pipeline
-                    try:
-                        for alert in detection_pipeline.evaluate(pkt_info):
-                            alert.session_id = session_id
-                            if alert_manager.add(alert):
-                                with alert_lock:
-                                    pending_alerts.append(alert)
-                    except Exception as e:
-                        logger.error(f"Detection evaluation error: {e}")
-                        degraded_subsystems["detection"] = "eval_error"
-
-                    # 3. Append to bounded TUI display buffer
-                    with buffer_lock:
-                        packet_buffer.append(pkt_info)
-
-                    # 4. Stream packet to disk via PCAP writer
-                    if pcap_writer:
-                        try:
-                            with pcap_lock:
-                                pcap_writer.write(raw_pkt)
-                        except Exception as e:
-                            pcap_errors_count[0] += 1
-                            logger.error(f"PCAP stream write error: {e}")
-                            degraded_subsystems["pcap"] = "disk_write_error"
-                else:
-                    processing_errors_count[0] += 1
-
-            except Exception as e:
-                processing_errors_count[0] += 1
-                logger.error(f"Packet processing error: {e}")
-            finally:
-                packet_queue.task_done()
-
-            # Flush alert batch if accumulated
-            if len(pending_alerts) >= 50:
-                flush_alert_batch()
-
-    # Start capture and processing worker
-    processor_thread = threading.Thread(target=packet_processing_worker, daemon=True)
-    processor_thread.start()
-
-    try:
-        sniffer.start(
-            interface=interface if interface else None,
-            bpf_filter=bpf_filter if bpf_filter else None,
-            callback=on_packet,
-        )
-        stats.start_rate_calculator()
-
-        refresh_fps = config.get("refresh_fps", 10)
-        refresh_interval = 1.0 / refresh_fps
-        paused = False
-        recent_latencies: deque = deque(maxlen=10)
-
-        # Dual Rate Tracker for truthful Capture PPS
-        last_rate_calc_time = time.time()
-        last_cap_count = 0
-        captured_pps = 0.0
-
-        # 1. Establish TASK_RUNNING screen ownership before starting Live
-        screen_manager.set_state(ScreenState.TASK_RUNNING)
-        with Live(
-            dashboard.get_renderable(),
-            console=console,
-            auto_refresh=False,
-            transient=True,
-        ) as live:
-            while sniffer.is_running():
-                try:
-                    t_loop_start = time.perf_counter()
-
-                    # Calculate Capture PPS
-                    now = time.time()
-                    dt_rate = now - last_rate_calc_time
-                    if dt_rate >= 1.0:
-                        cur_cap = captured_count[0]
-                        instant_cap_pps = (cur_cap - last_cap_count) / dt_rate
-                        captured_pps = (captured_pps * 0.5) + (instant_cap_pps * 0.5)
-                        last_cap_count = cur_cap
-                        last_rate_calc_time = now
-
-                    # 1. Microsecond safe snapshot: extract only required visible slice under lock
-                    visible_needed = dashboard.calculate_visible_rows()
-                    t_snap_start = time.perf_counter()
-                    with buffer_lock:
-                        buf_len = len(packet_buffer)
-                        take_n = min(buf_len, visible_needed)
-                        current_packets = [packet_buffer[i] for i in range(buf_len - take_n, buf_len)]
-                    t_snap_elapsed_ms = (time.perf_counter() - t_snap_start) * 1000.0
-                    recent_latencies.append(t_snap_elapsed_ms)
-                    avg_lat = sum(recent_latencies) / len(recent_latencies) if recent_latencies else 0.0
-
-                    # 2. Update dashboard layout
-                    dashboard.update(
-                        packets_buffer=current_packets,
-                        captured_count=captured_count[0],
-                        enqueued_count=enqueued_count[0],
-                        processed_count=processed_count[0],
-                        dropped_count=queue_dropped_count[0],
-                        queue_depth=packet_queue.qsize(),
-                        queue_capacity=packet_queue_size,
-                        paused=paused,
-                        degraded_subsystems=degraded_subsystems,
-                        avg_latency_ms=avg_lat,
-                        processing_errors=processing_errors_count[0],
-                        pcap_errors=pcap_errors_count[0],
-                        db_errors=db_errors_count[0],
-                        captured_pps=captured_pps,
-                    )
-
-                    # 3. Render latest frame directly
-                    live.update(dashboard.get_renderable(), refresh=True)
-
-                    # 4. Keyboard handling for Windows
-                    if sys.platform == 'win32':
-                        import msvcrt
-                        while msvcrt.kbhit():
-                            key = msvcrt.getch().decode('utf-8', 'ignore').lower()
-                            if key == 'q':
-                                sniffer.stop()
-                            elif key == 'p':
-                                paused = not paused
-                            elif key == 'f':
-                                live.stop()
-                                screen_manager.set_state(ScreenState.TASK_CONFIG)
-                                try:
-                                    new_filter = Prompt.ask("BPF Filter (blank to clear)", default="", console=console).strip()
-                                    if validate_bpf_filter(new_filter):
-                                        bpf_filter = new_filter
-                                        sniffer.restart_with_filter(bpf_filter if bpf_filter else None)
-                                    else:
-                                        console.print(f"[bold red]Filter change failed:[/bold red] Invalid BPF syntax '{new_filter}'")
-                                        time.sleep(1.0)
-                                except Exception as e:
-                                    from rich.markup import escape
-                                    console.print(f"[bold red]Filter change failed:[/bold red] {escape(str(e))}")
-                                    time.sleep(1.0)
-                                finally:
-                                    screen_manager.set_state(ScreenState.TASK_RUNNING)
-                                    live.start(refresh=True)
-                            elif key == 'e':
-                                live.stop()
-                                screen_manager.set_state(ScreenState.TASK_CONFIG)
-                                exporter = Exporter()
-                                export_dir = config.get("export_directory", "exports")
-                                filename = exporter.generate_filename("capture", "json")
-                                try:
-                                    filepath = exporter.validate_export_path(filename, export_dir)
-                                    exporter.export_json(
-                                        filepath,
-                                        alerts=alert_manager.get_all(),
-                                        stats=stats.get_snapshot(),
-                                    )
-                                    console.print(f"[green]Exported to:[/green] {filepath}")
-                                    time.sleep(1.0)
-                                except Exception as e:
-                                    from rich.markup import escape
-                                    console.print(f"[bold red]Export failed:[/bold red] {escape(str(e))}")
-                                    time.sleep(1.0)
-                                finally:
-                                    screen_manager.set_state(ScreenState.TASK_RUNNING)
-                                    live.start(refresh=True)
-
-                    # 5. Latest-State-Wins pacing: sleep only remaining time delta
-                    loop_elapsed = time.perf_counter() - t_loop_start
-                    sleep_time = max(0.0, refresh_interval - loop_elapsed)
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
-
-                except KeyboardInterrupt:
-                    break
-
-    except KeyboardInterrupt:
+        os.chmod(temp_pcap_path, 0o600)
+    except OSError:
         pass
-    except Exception as e:
-        from rich.markup import escape
-        console.print(f"[bold red]Error during capture:[/bold red] {escape(str(e))}")
-    finally:
-        # DETERMINISTIC SHUTDOWN SEQUENCE:
-        # 1. Stop capture producer
-        sniffer.stop()
 
-        # 2. Stop new enqueue and wait for processor worker to drain remaining packets
-        processing_running.clear()
-        processor_thread.join(timeout=3.0)
-
-        # 3. Flush alert batch
-        flush_alert_batch()
-
-        # 4. Flush & close PCAP writer
-        if pcap_writer:
-            try:
-                with pcap_lock:
-                    pcap_writer.close()
-            except Exception as e:
-                logger.error(f"Error closing PCAP writer: {e}")
-
-        # 5. Save session summary
-        snapshot = stats.get_snapshot()
-        db.end_session(
-            session_id=session_id,
-            packet_count=snapshot.total_packets,
-            total_bytes=snapshot.total_bytes,
-            alert_count=alert_manager.get_count(),
-        )
-        db.save_packet_summary(session_id, snapshot)
-
-        # 6. Stop workers
-        stats.stop_rate_calculator()
-
-        # 7. Transition to TASK_COMPLETE for post-capture reporting
-        screen_manager.set_state(ScreenState.TASK_COMPLETE)
-
-    console.print()
-    console.print(f"[bold green]Capture stopped.[/bold green]")
-    console.print(
-        f"  Captured: {captured_count[0]:,} | Processed: {processed_count[0]:,} | "
-        f"Bytes: {format_bytes(snapshot.total_bytes)} | Alerts: {alert_manager.get_count():,}"
-    )
-    if queue_dropped_count[0] > 0 or processing_errors_count[0] > 0 or pcap_errors_count[0] > 0 or db_errors_count[0] > 0:
-        console.print(
-            f"  [yellow]Loss/Errors Breakdown:[/yellow] "
-            f"Queue Dropped: {queue_dropped_count[0]:,} | Decode Errors: {processing_errors_count[0]:,} | "
-            f"PCAP Errors: {pcap_errors_count[0]:,} | DB Errors: {db_errors_count[0]:,}"
-        )
-    console.print()
-
-    # Offer export
-    if snapshot.total_packets > 0 and Confirm.ask("Export capture data?", default=False, console=console):
-        export_settings = prompt_export_settings()
-        if export_settings:
-            exporter = Exporter()
-            export_dir = config.get("export_directory", "exports")
-
-            fmt = export_settings.get("format", "csv").lower()
-            default_fn = exporter.generate_filename("capture", fmt)
-            user_fn = export_settings.get("filename", "").strip() or default_fn
-
-            try:
-                filepath = exporter.validate_export_path(user_fn, export_dir)
-
-                if fmt == "csv":
-                    exporter.export_csv(filepath, packets=list(packet_buffer), stats=snapshot)
-                elif fmt == "pcap":
-                    if os.path.exists(temp_pcap_path) and os.path.getsize(temp_pcap_path) > 0:
-                        shutil.copyfile(temp_pcap_path, filepath)
-                    else:
-                        raise RuntimeError("No raw PCAP data available for export.")
-                elif fmt == "json":
-                    exporter.export_json(filepath, alerts=alert_manager.get_all(), stats=snapshot)
-                else:
-                    raise ValueError(f"Unsupported export format: {fmt}")
-                console.print(f"[green]Exported to:[/green] {filepath}")
-            except Exception as e:
-                from rich.markup import escape
-                console.print(f"[bold red]Export failed:[/bold red] {escape(str(e))}")
-
-    # 8. Clean up temporary PCAP file
-    if os.path.exists(temp_pcap_path):
+    try:
+        pcap_writer = None
         try:
-            os.remove(temp_pcap_path)
+            import scapy.all as scapy
+            pcap_writer = scapy.PcapWriter(temp_pcap_path, sync=False)
         except Exception as e:
-            logger.warning(f"Failed to remove temp PCAP file {temp_pcap_path}: {e}")
+            logger.error(f"Failed to initialize PCAP streaming writer: {e}")
+            degraded_subsystems["pcap"] = "write_init_error"
+            pcap_errors_count[0] += 1
 
-    console.print()
+        # Create session record
+        session = SessionInfo(
+            session_type="capture",
+            start_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            interface=interface or "auto",
+            filter_applied=bpf_filter,
+            status="active",
+        )
+        session_id = db.create_session(session)
+
+        def on_packet(raw_pkt):
+            """Capture callback: lightweight bounded queue enqueue only."""
+            captured_count[0] += 1
+            try:
+                packet_queue.put_nowait(raw_pkt)
+                enqueued_count[0] += 1
+            except Full:
+                queue_dropped_count[0] += 1
+
+        def flush_alert_batch():
+            """Flush accumulated alerts to database."""
+            nonlocal pending_alerts
+            with alert_lock:
+                if not pending_alerts:
+                    return
+                batch_to_save = pending_alerts[:]
+                pending_alerts.clear()
+            try:
+                db.save_alerts_batch(batch_to_save)
+                degraded_subsystems.pop("db", None)
+            except Exception as e:
+                db_errors_count[0] += 1
+                logger.error(f"Database batch alert save error: {e}")
+                degraded_subsystems["db"] = "write_error"
+
+        # Dedicated Background Packet Processor Thread
+        processing_running = threading.Event()
+        processing_running.set()
+
+        def packet_processing_worker():
+            """
+            High-throughput worker thread continuously draining packet_queue into:
+            - Layer decoder (process_packet)
+            - StatsAggregator (EMA rate, protocols, top talkers)
+            - DetectionPipeline (rules, entropy, ARP, port scans)
+            - PCAP Streaming Writer (disk-backed)
+            - Recent packets buffer (bounded deque for TUI display)
+            - Alert batch queue (batched SQLite persistence)
+            """
+            while processing_running.is_set() or not packet_queue.empty():
+                try:
+                    raw_pkt = packet_queue.get(timeout=0.05)
+                except Empty:
+                    continue
+
+                try:
+                    processed_count[0] += 1
+                    pkt_info = process_packet(raw_pkt, processed_count[0])
+
+                    if pkt_info is not None:
+                        # 1. Update stats
+                        stats.update(pkt_info)
+
+                        # 2. Evaluate detection pipeline
+                        try:
+                            for alert in detection_pipeline.evaluate(pkt_info):
+                                alert.session_id = session_id
+                                if alert_manager.add(alert):
+                                    with alert_lock:
+                                        pending_alerts.append(alert)
+                        except Exception as e:
+                            logger.error(f"Detection evaluation error: {e}")
+                            degraded_subsystems["detection"] = "eval_error"
+
+                        # 3. Append to bounded TUI display buffer
+                        with buffer_lock:
+                            packet_buffer.append(pkt_info)
+
+                        # 4. Stream packet to disk via PCAP writer
+                        if pcap_writer:
+                            try:
+                                with pcap_lock:
+                                    pcap_writer.write(raw_pkt)
+                            except Exception as e:
+                                pcap_errors_count[0] += 1
+                                logger.error(f"PCAP stream write error: {e}")
+                                degraded_subsystems["pcap"] = "disk_write_error"
+                    else:
+                        processing_errors_count[0] += 1
+
+                except Exception as e:
+                    processing_errors_count[0] += 1
+                    logger.error(f"Packet processing error: {e}")
+                finally:
+                    packet_queue.task_done()
+
+                # Flush alert batch if accumulated
+                if len(pending_alerts) >= 50:
+                    flush_alert_batch()
+
+        # Start capture and processing worker
+        processor_thread = threading.Thread(target=packet_processing_worker, daemon=True)
+        processor_thread.start()
+
+        try:
+            sniffer.start(
+                interface=interface if interface else None,
+                bpf_filter=bpf_filter if bpf_filter else None,
+                callback=on_packet,
+            )
+            stats.start_rate_calculator()
+
+            refresh_fps = config.get("refresh_fps", 10)
+            refresh_interval = 1.0 / refresh_fps
+            paused = False
+            recent_latencies: deque = deque(maxlen=10)
+
+            # Dual Rate Tracker for truthful Capture PPS
+            last_rate_calc_time = time.time()
+            last_cap_count = 0
+            captured_pps = 0.0
+
+            # 1. Establish TASK_RUNNING screen ownership before starting Live
+            screen_manager.set_state(ScreenState.TASK_RUNNING)
+            with Live(
+                dashboard.get_renderable(),
+                console=console,
+                auto_refresh=False,
+                transient=True,
+            ) as live:
+                while sniffer.is_running():
+                    try:
+                        t_loop_start = time.perf_counter()
+
+                        # Calculate Capture PPS
+                        now = time.time()
+                        dt_rate = now - last_rate_calc_time
+                        if dt_rate >= 1.0:
+                            cur_cap = captured_count[0]
+                            instant_cap_pps = (cur_cap - last_cap_count) / dt_rate
+                            captured_pps = (captured_pps * 0.5) + (instant_cap_pps * 0.5)
+                            last_cap_count = cur_cap
+                            last_rate_calc_time = now
+
+                        # 1. Microsecond safe snapshot: extract only required visible slice under lock
+                        visible_needed = dashboard.calculate_visible_rows()
+                        t_snap_start = time.perf_counter()
+                        with buffer_lock:
+                            buf_len = len(packet_buffer)
+                            take_n = min(buf_len, visible_needed)
+                            current_packets = [packet_buffer[i] for i in range(buf_len - take_n, buf_len)]
+                        t_snap_elapsed_ms = (time.perf_counter() - t_snap_start) * 1000.0
+                        recent_latencies.append(t_snap_elapsed_ms)
+                        avg_lat = sum(recent_latencies) / len(recent_latencies) if recent_latencies else 0.0
+
+                        # 2. Update dashboard layout
+                        dashboard.update(
+                            packets_buffer=current_packets,
+                            captured_count=captured_count[0],
+                            enqueued_count=enqueued_count[0],
+                            processed_count=processed_count[0],
+                            dropped_count=queue_dropped_count[0],
+                            queue_depth=packet_queue.qsize(),
+                            queue_capacity=packet_queue_size,
+                            paused=paused,
+                            degraded_subsystems=degraded_subsystems,
+                            avg_latency_ms=avg_lat,
+                            processing_errors=processing_errors_count[0],
+                            pcap_errors=pcap_errors_count[0],
+                            db_errors=db_errors_count[0],
+                            captured_pps=captured_pps,
+                        )
+
+                        # 3. Render latest frame directly
+                        live.update(dashboard.get_renderable(), refresh=True)
+
+                        # 4. Keyboard handling for Windows
+                        if sys.platform == 'win32':
+                            import msvcrt
+                            while msvcrt.kbhit():
+                                key = msvcrt.getch().decode('utf-8', 'ignore').lower()
+                                if key == 'q':
+                                    sniffer.stop()
+                                elif key == 'p':
+                                    paused = not paused
+                                elif key == 'f':
+                                    live.stop()
+                                    screen_manager.set_state(ScreenState.TASK_CONFIG)
+                                    try:
+                                        new_filter = Prompt.ask("BPF Filter (blank to clear)", default="", console=console).strip()
+                                        if validate_bpf_filter(new_filter):
+                                            bpf_filter = new_filter
+                                            sniffer.restart_with_filter(bpf_filter if bpf_filter else None)
+                                        else:
+                                            console.print(f"[bold red]Filter change failed:[/bold red] Invalid BPF syntax '{new_filter}'")
+                                            time.sleep(1.0)
+                                    except Exception as e:
+                                        from rich.markup import escape
+                                        console.print(f"[bold red]Filter change failed:[/bold red] {escape(str(e))}")
+                                        time.sleep(1.0)
+                                    finally:
+                                        screen_manager.set_state(ScreenState.TASK_RUNNING)
+                                        live.start(refresh=True)
+                                elif key == 'e':
+                                    live.stop()
+                                    screen_manager.set_state(ScreenState.TASK_CONFIG)
+                                    export_dir = config.get("export_directory", "exports")
+                                    exporter = Exporter(default_export_dir=export_dir, allow_absolute=False)
+                                    filename = exporter.generate_filename("capture", "json")
+                                    try:
+                                        filepath = exporter.validate_export_path(filename, export_dir, allow_absolute=False)
+                                        exporter.export_json(
+                                            filepath,
+                                            alerts=alert_manager.get_all(),
+                                            stats=stats.get_snapshot(),
+                                        )
+                                        console.print(f"[green]Exported to:[/green] {filepath}")
+                                        time.sleep(1.0)
+                                    except Exception as e:
+                                        from rich.markup import escape
+                                        console.print(f"[bold red]Export failed:[/bold red] {escape(str(e))}")
+                                        time.sleep(1.0)
+                                    finally:
+                                        screen_manager.set_state(ScreenState.TASK_RUNNING)
+                                        live.start(refresh=True)
+
+                        # 5. Latest-State-Wins pacing: sleep only remaining time delta
+                        loop_elapsed = time.perf_counter() - t_loop_start
+                        sleep_time = max(0.0, refresh_interval - loop_elapsed)
+                        if sleep_time > 0:
+                            time.sleep(sleep_time)
+
+                    except KeyboardInterrupt:
+                        break
+
+        except KeyboardInterrupt:
+            pass
+        except Exception as e:
+            from rich.markup import escape
+            console.print(f"[bold red]Error during capture:[/bold red] {escape(str(e))}")
+        finally:
+            # DETERMINISTIC SHUTDOWN SEQUENCE:
+            # 1. Stop capture producer
+            sniffer.stop()
+
+            # 2. Stop new enqueue and wait for processor worker to drain remaining packets
+            processing_running.clear()
+            processor_thread.join(timeout=3.0)
+
+            # 3. Flush alert batch
+            flush_alert_batch()
+
+            # 4. Flush & close PCAP writer
+            if pcap_writer:
+                try:
+                    with pcap_lock:
+                        pcap_writer.close()
+                except Exception as e:
+                    logger.error(f"Error closing PCAP writer: {e}")
+
+            # 5. Save session summary
+            snapshot = stats.get_snapshot()
+            db.end_session(
+                session_id=session_id,
+                packet_count=snapshot.total_packets,
+                total_bytes=snapshot.total_bytes,
+                alert_count=alert_manager.get_count(),
+            )
+            db.save_packet_summary(session_id, snapshot)
+
+            # 6. Stop workers
+            stats.stop_rate_calculator()
+
+            # 7. Transition to TASK_COMPLETE for post-capture reporting
+            screen_manager.set_state(ScreenState.TASK_COMPLETE)
+
+        console.print()
+        console.print(f"[bold green]Capture stopped.[/bold green]")
+        console.print(
+            f"  Captured: {captured_count[0]:,} | Processed: {processed_count[0]:,} | "
+            f"Bytes: {format_bytes(snapshot.total_bytes)} | Alerts: {alert_manager.get_count():,}"
+        )
+        if queue_dropped_count[0] > 0 or processing_errors_count[0] > 0 or pcap_errors_count[0] > 0 or db_errors_count[0] > 0:
+            console.print(
+                f"  [yellow]Loss/Errors Breakdown:[/yellow] "
+                f"Queue Dropped: {queue_dropped_count[0]:,} | Decode Errors: {processing_errors_count[0]:,} | "
+                f"PCAP Errors: {pcap_errors_count[0]:,} | DB Errors: {db_errors_count[0]:,}"
+            )
+        console.print()
+
+        # Offer export
+        if snapshot.total_packets > 0 and Confirm.ask("Export capture data?", default=False, console=console):
+            export_settings = prompt_export_settings()
+            if export_settings:
+                export_dir = config.get("export_directory", "exports")
+                exporter = Exporter(default_export_dir=export_dir, allow_absolute=False)
+
+                fmt = export_settings.get("format", "csv").lower()
+                default_fn = exporter.generate_filename("capture", fmt)
+                user_fn = export_settings.get("filename", "").strip() or default_fn
+
+                try:
+                    filepath = exporter.validate_export_path(user_fn, export_dir, allow_absolute=False)
+
+                    if fmt == "csv":
+                        exporter.export_csv(filepath, packets=list(packet_buffer), stats=snapshot)
+                    elif fmt == "pcap":
+                        if os.path.exists(temp_pcap_path) and os.path.getsize(temp_pcap_path) > 0:
+                            shutil.copyfile(temp_pcap_path, filepath)
+                        else:
+                            raise RuntimeError("No raw PCAP data available for export.")
+                    elif fmt == "json":
+                        exporter.export_json(filepath, alerts=alert_manager.get_all(), stats=snapshot)
+                    else:
+                        raise ValueError(f"Unsupported export format: {fmt}")
+                    console.print(f"[green]Exported to:[/green] {filepath}")
+                except Exception as e:
+                    from rich.markup import escape
+                    console.print(f"[bold red]Export failed:[/bold red] {escape(str(e))}")
+
+    finally:
+        # Guarantee cleanup of temporary PCAP file on any exit, error, or interrupt
+        if os.path.exists(temp_pcap_path):
+            try:
+                os.remove(temp_pcap_path)
+            except Exception as e:
+                logger.warning(f"Failed to remove temp PCAP file {temp_pcap_path}: {e}")
+
     Prompt.ask("Press Enter to return to main menu", default="", console=console)
 
 
@@ -770,14 +832,14 @@ def run_pcap_analysis(config: dict, db: Database, privacy: PrivacyFilter):
     if packets and Confirm.ask("Export analysis report?", default=False, console=console):
         export_settings = prompt_export_settings()
         if export_settings:
-            exporter = Exporter()
             export_dir = config.get("export_directory", "exports")
+            exporter = Exporter(default_export_dir=export_dir, allow_absolute=False)
             fmt = export_settings.get("format", "csv").lower()
             default_fn = exporter.generate_filename("pcap_analysis", fmt)
             user_fn = export_settings.get("filename", "").strip() or default_fn
 
             try:
-                out_path = exporter.validate_export_path(user_fn, export_dir)
+                out_path = exporter.validate_export_path(user_fn, export_dir, allow_absolute=False)
                 if fmt == "csv":
                     exporter.export_csv(out_path, packets=packets, stats=stats_snapshot)
                 elif fmt == "json":
@@ -971,6 +1033,7 @@ def main():
 
     # Load configuration
     config = load_config(config_path_override=args.config)
+    setup_logging(config)
 
     # Override config with CLI args
     if args.db:

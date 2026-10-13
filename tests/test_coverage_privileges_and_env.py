@@ -6,6 +6,7 @@ and prerequisite summary aggregations.
 
 import os
 import sys
+import ctypes
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -19,20 +20,21 @@ from utils.privileges import (
 
 class TestPrivilegesAndEnvironment:
     def test_check_privileges_windows_admin_and_non_admin(self):
-        with patch.object(sys, "platform", "win32"):
+        mock_windll = MagicMock()
+        with patch.object(sys, "platform", "win32"), patch.object(ctypes, "windll", mock_windll, create=True):
             # 1. Running as Administrator
-            with patch("ctypes.windll.shell32.IsUserAnAdmin", return_value=1):
-                assert check_privileges(require_exit=False) is True
+            mock_windll.shell32.IsUserAnAdmin.return_value = 1
+            assert check_privileges(require_exit=False) is True
 
             # 2. Running as Standard User with require_exit=False
-            with patch("ctypes.windll.shell32.IsUserAnAdmin", return_value=0):
-                assert check_privileges(require_exit=False) is False
+            mock_windll.shell32.IsUserAnAdmin.return_value = 0
+            assert check_privileges(require_exit=False) is False
 
             # 3. Running as Standard User with require_exit=True (must call sys.exit(1))
-            with patch("ctypes.windll.shell32.IsUserAnAdmin", return_value=0):
-                with pytest.raises(SystemExit) as exc:
-                    check_privileges(require_exit=True)
-                assert exc.value.code == 1
+            mock_windll.shell32.IsUserAnAdmin.return_value = 0
+            with pytest.raises(SystemExit) as exc:
+                check_privileges(require_exit=True)
+            assert exc.value.code == 1
 
     def test_check_privileges_unix_root_and_non_root(self):
         with patch.object(sys, "platform", "linux"):

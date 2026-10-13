@@ -94,7 +94,7 @@ class AuditRegressionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             csv_path = Path(tmp) / "packets.csv"
             json_path = Path(tmp) / "alerts.json"
-            exporter = Exporter()
+            exporter = Exporter(default_export_dir=tmp)
             exporter.export_csv(str(csv_path), packets=[packet], stats=stats.get_snapshot())
             exporter.export_json(str(json_path), alerts=[alert], stats=stats.get_snapshot())
 

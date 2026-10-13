@@ -79,8 +79,8 @@ class TestHistoryViewAndStorageCoverage:
         display_session_detail(session, alerts)
 
     def test_exporter_json_with_payload_and_empty_csv(self):
-        exporter = Exporter()
         with tempfile.TemporaryDirectory() as tmpdir:
+            exporter = Exporter(default_export_dir=tmpdir)
             json_file = os.path.join(tmpdir, "payload_export.json")
             csv_file = os.path.join(tmpdir, "empty_export.csv")
 

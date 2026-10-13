@@ -27,8 +27,8 @@ def process_packet(raw_packet, packet_id: int) -> Optional[PacketInfo]:
     try:
         ts_float = float(raw_packet.time) if hasattr(raw_packet, "time") else time.time()
         dt = datetime.fromtimestamp(ts_float)
-        timestamp_str = dt.strftime("%H:%M:%S.") + f"{dt.microsecond // 1000:03d}"
-        date_str = dt.strftime("%Y-%m-%d")
+        timestamp_str = f"{dt.hour:02d}:{dt.minute:02d}:{dt.second:02d}.{dt.microsecond // 1000:03d}"
+        date_str = f"{dt.year:04d}-{dt.month:02d}-{dt.day:02d}"
         length = (
             raw_packet.wirelen
             if hasattr(raw_packet, "wirelen") and raw_packet.wirelen is not None

@@ -34,7 +34,7 @@ class Exporter:
         "program files (x86)", "recovery", "boot",
     })
 
-    def __init__(self, default_export_dir: str = "exports", allow_absolute: bool = True):
+    def __init__(self, default_export_dir: str = "exports", allow_absolute: bool = False):
         self.default_export_dir = default_export_dir
         self.allow_absolute = allow_absolute
 
@@ -72,7 +72,7 @@ class Exporter:
     def validate_export_path(
         self,
         filepath: str,
-        export_dir: Optional[str] = "exports",
+        export_dir: Optional[str] = None,
         allow_absolute: Optional[bool] = None,
     ) -> str:
         """Sanitize, resolve, and validate output file paths against path traversal.
@@ -130,9 +130,6 @@ class Exporter:
             # Validate system directories early regardless of allow_absolute
             self._verify_not_prohibited_directory(Path(clean_path), filepath)
 
-            if not allow_absolute:
-                raise ValueError(f"Absolute export paths are not permitted: '{filepath}'")
-
             target_path = Path(clean_path)
             try:
                 real_parent = target_path.parent.resolve()
@@ -140,22 +137,32 @@ class Exporter:
             except (OSError, RuntimeError) as e:
                 raise ValueError(f"Invalid export path: '{filepath}': {e}")
 
-            # Check if target is inside base_dir_path
+            # Check if target is inside base_dir_path (contained in permitted export directory)
             if real_target.is_relative_to(base_dir_path):
                 self.ensure_export_dir(str(real_parent))
                 return str(real_target)
+
+            # Target is outside base_dir_path: require explicit opt-in
+            if not allow_absolute:
+                raise ValueError(
+                    f"Export path '{filepath}' is outside permitted directory '{export_dir}'. "
+                    f"Absolute paths outside export directory are not permitted by default."
+                )
 
             # If an explicit export_dir was given (different from default), reject escaping it
             if export_dir != self.DEFAULT_EXPORT_DIR and export_dir != str(base_dir_path):
                 raise ValueError(f"Export path '{filepath}' is outside permitted directory '{export_dir}'")
 
             # Check sibling directory prefix collisions against base_dir_path
-            if (
-                real_target.parent.parent == base_dir_path.parent
-                and real_target.parent != base_dir_path
-                and real_target.parent.name.startswith(base_dir_path.name)
-            ):
-                raise ValueError(f"Path traversal detected in export path: '{filepath}'")
+            curr = real_target.parent
+            while curr != curr.parent:
+                if (
+                    curr.parent == base_dir_path.parent
+                    and curr != base_dir_path
+                    and curr.name.startswith(base_dir_path.name)
+                ):
+                    raise ValueError(f"Path traversal detected in export path: '{filepath}'")
+                curr = curr.parent
 
             # Validate against system directories
             self._verify_not_prohibited_directory(real_target, filepath)
@@ -294,9 +301,7 @@ class Exporter:
                 "unique_hosts": stats.unique_hosts_total if stats else (len(hosts) if hosts else 0),
                 "protocol_counts": stats.protocol_counts if stats else {},
                 "top_talkers": stats.top_talkers if stats else [],
-            }
-            if stats
-            else None,
+            },
             "alerts": [
                 {
                     "id": a.id,

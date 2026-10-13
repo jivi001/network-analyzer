@@ -191,3 +191,31 @@ class TestCorePcapLoader:
         finally:
             if os.path.exists(empty_path):
                 os.remove(empty_path)
+
+    def test_stream_synthetic_pcap_and_bounded_load(self):
+        """Verify incremental generator streaming and bounded load with max_packets."""
+        loader = PcapLoader()
+        with tempfile.NamedTemporaryFile(suffix=".pcap", delete=False) as tf:
+            pcap_path = tf.name
+
+        try:
+            from scapy.utils import wrpcap
+            pkts = [
+                Ether() / IP(src="10.0.0.1", dst="10.0.0.2") / TCP(sport=1000 + i, dport=80) / b"payload"
+                for i in range(5)
+            ]
+            wrpcap(pcap_path, pkts)
+
+            # 1. Test stream() generator yielding packets incrementally
+            streamed = list(loader.stream(pcap_path))
+            assert len(streamed) == 5
+            assert streamed[0].src_ip == "10.0.0.1"
+            stats = loader.get_stats()
+            assert stats.total_packets == 5
+
+            # 2. Test bounded load with max_packets
+            bounded = loader.load(pcap_path, max_packets=3)
+            assert len(bounded) == 3
+        finally:
+            if os.path.exists(pcap_path):
+                os.remove(pcap_path)
