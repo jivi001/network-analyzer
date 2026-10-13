@@ -12,7 +12,40 @@
 
 ---
 
-## 2. Automated Global Installation (Windows)
+## 2. Automated Cross-Platform Installation
+
+### Linux / macOS / WSL
+
+To install `sentinel` as a CLI command accessible across your environment:
+
+1. Open your terminal and navigate to the project directory:
+   ```bash
+   cd network-analyzer
+   ```
+2. Make the installer executable and run it:
+   ```bash
+   chmod +x install.sh
+   ./install.sh
+   ```
+   *(Optional: pass `--dev` to include development and test dependencies: `./install.sh --dev`)*
+
+The script automatically:
+- Detects `uv` (fast installer) or standard `python3`.
+- Creates `.venv/` virtual environment.
+- Bootstraps `pip` / `uv` without failing if `pip` is omitted in the base environment.
+- Installs `my-sentinel` in editable mode (`-e .`).
+- Sets execution permissions on `./run.sh`.
+- Creates a user launcher symlink in `~/.local/bin/sentinel` for immediate command-line access.
+- Checks Linux network capabilities (`cap_net_raw,cap_net_admin`) and Nmap presence.
+
+3. Run `sentinel` directly:
+   ```bash
+   sentinel
+   ```
+
+---
+
+### Windows (PowerShell / Command Prompt)
 
 To install `sentinel` as a global CLI command accessible from any PowerShell prompt:
 
@@ -21,17 +54,19 @@ To install `sentinel` as a global CLI command accessible from any PowerShell pro
    ```powershell
    cd network-analyzer
    ```
-3. Run the installation script:
+3. Run the installation script (or execute `install.bat`):
    ```powershell
    .\install.ps1
    ```
+   *(Optional: pass `-Dev` to include test dependencies: `.\install.ps1 -Dev`)*
 
-The script performs:
-- Creates a virtual environment in `.venv/`
-- Upgrades `pip`, `setuptools`, and `wheel`
-- Installs all dependencies from `requirements.txt`
-- Installs `my-sentinel` in editable mode (`pip install -e .`)
-- Adds `.venv\Scripts` to user `%PATH%`
+The script automatically:
+- Terminates any running locked sentinel processes.
+- Detects `uv` or `python` and initializes `.venv\`.
+- Bootstraps `pip` via `ensurepip` if missing.
+- Installs `my-sentinel` in editable mode.
+- Appends `.venv\Scripts` to User and Machine `%PATH%`.
+- Validates Npcap packet capture driver and Nmap binary installation.
 
 4. Open a fresh PowerShell window and run:
    ```powershell
@@ -42,8 +77,22 @@ The script performs:
 
 ## 3. Manual Virtual Environment Installation
 
-### Windows (PowerShell / Command Prompt)
+### Option A: Ultra-Fast Installation with `uv` (Cross-Platform)
 
+```bash
+# 1. Create virtual environment
+uv venv .venv
+
+# 2. Sync all dependencies and install in editable mode
+uv pip install -e ".[dev]"
+
+# 3. Launch
+uv run sentinel
+```
+
+### Option B: Standard Python (`venv` & `pip`)
+
+#### Windows (PowerShell)
 ```powershell
 # 1. Create virtual environment
 python -m venv .venv
@@ -51,8 +100,8 @@ python -m venv .venv
 # 2. Activate virtual environment
 .venv\Scripts\Activate.ps1
 
-# 3. Install requirements
-pip install -r requirements.txt
+# 3. Upgrade build tools
+python -m pip install --upgrade pip setuptools wheel
 
 # 4. Install my-sentinel package
 pip install -e .
@@ -61,8 +110,7 @@ pip install -e .
 sentinel
 ```
 
-### Linux / macOS
-
+#### Linux / macOS
 ```bash
 # 1. Create virtual environment
 python3 -m venv .venv
@@ -70,19 +118,19 @@ python3 -m venv .venv
 # 2. Activate virtual environment
 source .venv/bin/activate
 
-# 3. Install requirements
-pip install -r requirements.txt
+# 3. Upgrade build tools
+python3 -m pip install --upgrade pip setuptools wheel
 
 # 4. Install package
 pip install -e .
 
-# 5. Launch with sudo for raw packet access
+# 5. Launch with sudo for raw packet capture
 sudo .venv/bin/sentinel
 ```
 
 ---
 
-## 4. Dependencies Reference (`requirements.txt`)
+## 4. Dependencies Reference (`pyproject.toml` / `requirements.txt`)
 
 ```text
 scapy>=2.5.0
@@ -96,13 +144,15 @@ pyyaml>=6.0
 
 ## 5. Environment Verification Commands
 
-```powershell
+```bash
 # Verify Python version
-python --version
+python3 --version  # or python --version
 
 # Verify sentinel CLI availability
 sentinel --version
 
-# Verify automated test suite execution
-python -m pytest tests\ -v
+# Verify automated test suite execution (286 tests, 100% pass)
+uv run --extra dev pytest tests/ -v
+# Or via standard pytest
+pytest tests/ -v
 ```

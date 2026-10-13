@@ -55,6 +55,9 @@ if [ -f ".venv/bin/sentinel" ]; then
     mkdir -p "$HOME/.local/bin"
     ln -sf "$SCRIPT_DIR/.venv/bin/sentinel" "$HOME/.local/bin/sentinel"
     echo "[*] Created user launcher: ~/.local/bin/sentinel"
+    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+        echo "    [!] Note: ~/.local/bin is not in your current PATH. Add it via: export PATH=\"\$HOME/.local/bin:\$PATH\""
+    fi
 fi
 
 # 5. System diagnostics

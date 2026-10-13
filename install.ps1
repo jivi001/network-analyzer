@@ -44,7 +44,13 @@ $venvScripts = Join-Path $scriptDir ".venv\Scripts"
 
 if (-not (Test-Path $venvPython)) {
     Write-Host "[*] Creating Python virtual environment in .venv..." -ForegroundColor Yellow
-    & python -m venv .venv
+    if (Get-Command uv -ErrorAction SilentlyContinue) {
+        Write-Host "    [+] Utilizing 'uv' for virtual environment creation..." -ForegroundColor Gray
+        & uv venv .venv
+    }
+    else {
+        & python -m venv .venv
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[-] Failed to create virtual environment." -ForegroundColor Red
         exit 1
@@ -69,14 +75,31 @@ if (Test-Path $venvScripts) {
     }
 }
 
-# 6. Upgrade Pip and Build Tools
-Write-Host "[*] Upgrading pip, setuptools, and wheel..." -ForegroundColor Yellow
-& $venvPython -m pip install --upgrade pip setuptools wheel --quiet
-
-# 7. Install Package in Editable Mode
+# 6. Install Package in Editable Mode
 $installTarget = if ($Dev) { ".[dev]" } else { "." }
-Write-Host "[*] Installing my-sentinel package in editable mode ($installTarget)..." -ForegroundColor Yellow
-& $venvPython -m pip install -e $installTarget
+
+if (Get-Command uv -ErrorAction SilentlyContinue) {
+    Write-Host "[*] Installing my-sentinel package via uv ($installTarget)..." -ForegroundColor Yellow
+    & uv pip install -e $installTarget
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[-] Installation via uv failed. Falling back to pip..." -ForegroundColor Yellow
+    }
+}
+
+if (-not (Get-Command uv -ErrorAction SilentlyContinue) -or ($LASTEXITCODE -ne 0)) {
+    # Check if pip is present, bootstrap via ensurepip if missing
+    $pipAvailable = & $venvPython -m pip --version 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[*] Bootstrapping pip into virtual environment..." -ForegroundColor Yellow
+        & $venvPython -m ensurepip --default-pip --upgrade 2>&1 | Out-Null
+    }
+
+    Write-Host "[*] Upgrading pip, setuptools, and wheel..." -ForegroundColor Yellow
+    & $venvPython -m pip install --upgrade pip setuptools wheel --quiet 2>&1 | Out-Null
+
+    Write-Host "[*] Installing my-sentinel package in editable mode ($installTarget)..." -ForegroundColor Yellow
+    & $venvPython -m pip install -e $installTarget
+}
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[-] Installation failed. Check the error output above." -ForegroundColor Red
