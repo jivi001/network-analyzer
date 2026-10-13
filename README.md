@@ -59,16 +59,17 @@
 ## ✨ Core Capabilities
 
 ### 🔴 Mode 1: Live Packet Capture & Streaming
-- Non-blocking packet sniffing using Scapy in a background thread (`PacketSniffer`).
+- Non-blocking packet sniffing using Scapy in a background thread (`PacketSniffer`) with 500ms cycle timeout loop and deterministic 3.0s join timeout.
 - Single shared Rich console renderer (`utils.console.console`) with strict `ScreenState` screen lifecycle ownership.
 - BPF capture filtering (`filter="tcp port 80 or tcp port 443"`) with runtime syntax compilation and validation.
 - Real-time Exponential Moving Average throughput rates (capture PPS vs processing PPS) and sustained backlog detection.
 - Sampled background system telemetry (process CPU %, resident RAM in MB, active thread count).
 - Memory-bounded processing (10,000 queue limit, bounded packet display ring-buffer).
+- Secure disk streaming with `0o600` permissions on temporary PCAP files and guaranteed `try...finally:` removal.
 - Dynamic hotkeys: `[P]ause  [F]ilter  [E]xport  [Q]uit`.
 
 ### 🔍 Mode 2: Network Scanner (12 Bounded Profiles)
-- `python-nmap` integration with target validation (IPv4, IPv6, CIDR, hostname) and strict argument allowlist enforcement:
+- `python-nmap` integration with target validation (IPv4, IPv6, CIDR, hostname) and strict argument allowlists (`STANDALONE_FLAGS`, `OPTION_FLAGS`, port ranges, and option value validation):
   1. `discovery`: Live host discovery sweep (`-sn`)
   2. `fast_discovery`: Accelerated ping sweep (`-sn -T4`)
   3. `top_ports`: TCP SYN scan top 1000 ports (`-sS --top-ports 1000`)
@@ -83,7 +84,8 @@
   12. `stealth`: Evasive slow SYN scan (`-sS -T2 --top-ports 100`)
 
 ### 📂 Mode 3: Offline PCAP Forensic Analysis
-- Parses `.pcap`, `.pcapng`, and `.cap` files offline via streaming `scapy.PcapReader` in constant memory.
+- True constant-memory generator streaming (`PcapLoader.stream()`) reading `.pcap`, `.pcapng`, and `.cap` in $O(1)$ memory.
+- Bounded list loading (`PcapLoader.load(max_packets=N)`) with documented linear RAM scaling.
 - Decodes IPv4, IPv6, ARP, TCP, UDP, DNS, ICMP, and non-Ethernet link layers.
 - Calculates truthful forensic capture duration and packet rates from packet timestamps.
 - Aggregates protocol distribution, top data sources, top network conversations, and flags historical security threats.
@@ -91,12 +93,13 @@
 
 ### 💾 Format-Specific Export Subsystem
 - **`.pcap`**: Exports raw Scapy packet binaries verifiable by Wireshark and tcpdump.
-- **`.csv`**: Formats structured RFC 4180 CSV with escaped delimiters for packet event logs and security alert feeds.
+- **`.csv`**: Formats structured RFC 4180 CSV with escaped delimiters and explicit keyword-argument contracts.
 - **`.json`**: Serializes machine-readable structured JSON with application metadata, capture stats, alerts, hosts, and packet streams.
-- Path traversal guards protecting against unauthorized directory writes.
+- Strict path containment policy enforcing `allow_absolute=False` default, `Path.is_relative_to` verification, recursive ancestor sibling collision protection, system directory denylists, and deferred directory creation.
 
 ### 📊 Mode 4: Audit & History Management
-- Persistent SQLite storage (`sentinel_data.db`) operating in **WAL mode** with `busy_timeout=5000ms`.
+- Persistent SQLite storage (`sentinel_data.db`) operating in **WAL mode** with `busy_timeout=5000ms` and graceful read-only fallback.
+- Active connection health validation via `SELECT 1`, automatic stale connection pruning, and thread cleanup.
 - Tracks sessions, alerts, hosts, packet summaries, and scan results with transactional integrity.
 
 ### 🛡️ Multi-Vector Threat Detection Engine
@@ -108,8 +111,9 @@
 
 ### 🧪 Controlled Real Traffic Lab (`traffic_lab.py`)
 - High-precision token/interval rate dispatcher for benchmark testing.
-- Bounded thread worker pool preventing network latency from bottlenecking target generation rate.
-- Fine-grained diagnostic breakdown tracking attempts, successes, timeouts, and connection errors.
+- Bounded thread worker pool via semaphore backpressure (`max_workers + queue_capacity`) preventing memory bloat.
+- Fine-grained diagnostic breakdown tracking attempts, successes, timeouts, connection errors, and rejected tasks.
+- Cryptographically secure PRNG (`secrets.randbelow(65536)`) for DNS query transaction IDs (CWE-330).
 
 ---
 
@@ -152,6 +156,8 @@ Explore the operational knowledge base:
 
 | Document | Description |
 |----------|-------------|
+| [Remediation Engineering Report](docs/remediation/final-remediation-report.md) | Complete P0/P1/P2 remediation report: findings, fixes, security boundaries, and lifecycle verification. |
+| [Defect-to-Test Mapping Matrix](docs/remediation/defect-test-matrix.md) | Traceability matrix mapping all 15 defects (DEF-001–DEF-015) to regression tests and status. |
 | [Architecture Guide](docs/architecture.md) | Component responsibilities, threading model, and failure degradation. |
 | [Installation Guide](docs/installation.md) | Requirements, automated setup, and manual virtual environment configuration. |
 | [Configuration Reference](docs/configuration.md) | Complete `config.yaml` parameter specification and runtime effects. |
@@ -168,9 +174,9 @@ Explore the operational knowledge base:
 | [Network Intelligence](docs/network-intelligence.md) | Reverse DNS resolver, WHOIS lookup engine with TTL caching, ICMP traceroute. |
 | [Troubleshooting Guide](docs/troubleshooting.md) | Solutions for sniffer permissions, Nmap PATH, SQLite locks, and TUI display. |
 | [Developer Debugging](docs/debugging.md) | Debug logging, Scapy dissector debugging, thread inspection, and SQLite queries. |
-| [Automated Testing](docs/testing.md) | Pytest suite breakdown (167 unit, subsystem stress, and end-to-end workflow tests). |
+| [Automated Testing](docs/testing.md) | Pytest suite breakdown (286 unit, security boundary, stress, and end-to-end tests). |
 | [Performance Architecture](docs/performance.md) | Memory bounds, 10,000 queue limits, EMA rate smoothing, and SQLite WAL pragmas. |
-| [Security Controls](docs/security.md) | Command injection prevention, BPF checks, path traversal guards, SQL parameters. |
+| [Security Controls](docs/security.md) | Command injection prevention, BPF checks, path containment, PRNG hardening, SQL parameters. |
 | [Developer Guide](docs/development.md) | Repository directory structure, coding standards, and architectural guidelines. |
 | [Extension Guide](docs/extension-guide.md) | Step-by-step instructions for adding detection rules, scan profiles, and tables. |
 | [Data Flow Architecture](docs/data-flow.md) | Tracing packet, alert, and scan data flowing through subsystems. |
@@ -183,12 +189,12 @@ Explore the operational knowledge base:
 
 ## 🧪 Testing Verification
 
-Run the 244-test automated regression, stress, and end-to-end workflow suite:
+Run the 286-test automated regression, security boundary, stress, and end-to-end workflow suite:
 
-```powershell
-.venv\Scripts\python.exe -m pytest tests/ -v
+```bash
+uv run --extra dev pytest tests/ -v
 ```
 
 ```text
-============================ 244 passed in 19.41s =============================
+============================= 286 passed in 8.01s =============================
 ```

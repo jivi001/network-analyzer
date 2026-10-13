@@ -97,3 +97,14 @@ CREATE TABLE IF NOT EXISTS scan_results (
 | `get_recent_sessions(limit)` | Fetches recent session records sorted by `id DESC`. |
 | `get_session_alerts(session_id)` | Fetches all alerts belonging to a specific session. |
 | `get_all_hosts()` | Fetches all discovered host records. |
+| `close_current_thread_connection()` | Gracefully closes the SQLite connection tied to the current calling thread. |
+| `close_all()` | Iterates through all tracked thread connections, closing open handles and resetting thread-local state. |
+
+---
+
+## 5. Thread Safety & Lifecycle Management
+
+- **Thread-Local Connection Pooling**: Each execution thread accesses its own isolated SQLite connection via `threading.local()`, avoiding multi-threaded database lock contention.
+- **Connection Liveness Verification**: Connection health is checked dynamically (`SELECT 1`) prior to query dispatch. Dead or stale connections are automatically pruned and re-established.
+- **WAL Journaling with Fallback**: Configured with `PRAGMA journal_mode=WAL` for concurrent reader/writer concurrency, with graceful fallback for read-only or restricted filesystem environments.
+- **In-Memory Testing Support**: Transparently preserves `:memory:` paths without file path expansion for fast, isolated test fixture execution.

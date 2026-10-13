@@ -50,18 +50,20 @@ Packet capture in `my-sentinel` is driven by `PacketSniffer` in `core/sniffer.py
 - Spawns background daemon thread target `_sniff_loop(interface)`.
 
 ### `_sniff_loop(interface)`
-- Executes `scapy.sniff()` with arguments:
+- Executes an active loop `while self.running.is_set():` calling `scapy.sniff()` with arguments:
   - `iface`: Target interface name
   - `filter`: BPF filter string
   - `prn`: Packet callback wrapper (`self._process_packet`)
+  - `timeout`: `0.5` (**Critical: Prevents thread hang on idle interfaces by returning control every 500ms**)
+  - `count`: `50` (Batches packet processing per cycle)
   - `stop_filter`: `lambda p: not self.running.is_set()`
-  - `store`: `0` (**Critical: Prevents memory leak by telling Scapy not to accumulate packets in RAM**)
+  - `store`: `0` (**Critical: Prevents memory leak by instructing Scapy not to accumulate packets in RAM**)
 
 ### `stop()`
-- Sets state to `STOPPING`, clears `running` event, and joins background sniffing thread with `timeout=2.0s`.
+- Sets state to `STOPPING`, clears `running` event, and joins background sniffing thread with `timeout=2.0s`. Because the sniffing loop operates with bounded 500ms intervals, thread joins resolve deterministically even when no packets are traversing the network.
 
 ### `restart_with_filter(bpf_filter)`
-- Thread-safe stop and restart using a updated BPF filter string.
+- Thread-safe stop and restart using an updated BPF filter string.
 
 ---
 

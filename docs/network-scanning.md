@@ -39,13 +39,41 @@ Arbitrary command construction via `os.system()` or `subprocess(shell=True)` is 
 
 ---
 
-## 4. Timeout Enforcement (`_get_scan_args`)
+## 4. Argument & Port Allowlist Security (`validate_scan_args` & `validate_ports`)
+
+To prevent CWE-88 argument injection and shell escape attacks:
+
+### Standalone Flags Allowlist
+Only explicitly vetted scanning parameters are permitted:
+- Discovery & Type: `-sn`, `-sS`, `-sT`, `-sV`, `-sU`, `-O`, `-A`
+- Performance Timing: `-T0`, `-T1`, `-T2`, `-T3`, `-T4`, `-T5`
+- Resolution & Host Control: `-Pn`, `-n`, `-v`, `-vv`, `-6`
+
+### Parameterized Options Validation
+Options consuming arguments are strictly parsed and validated:
+- `--top-ports <N>`: Enforces $1 \le N \le 65535$.
+- `--host-timeout <N>s`: Enforces positive integer seconds.
+- `-p <spec>`: Validated against port specification grammar.
+
+### Port Specification Grammar (`validate_ports`)
+Custom port parameters must conform strictly to numeric ranges `1-65535`, comma separators, hyphens for ranges, or standard protocol prefixes (`T:`, `U:`). Invalid characters, trailing operators, or injected tokens trigger immediate validation errors.
+
+### Smuggling & Dangerous Options Rejection
+The scanner unconditionally rejects:
+- File output redirection: `-oN`, `-oX`, `-oG`, `-oA`
+- Script engines: `--script`, `--script-args`
+- Interactive or input file loads: `-iL`, `-iR`, `--resume`
+- Shell metacharacters: `;`, `&`, `|`, `` ` ``, `$`, `\n`
+
+---
+
+## 5. Timeout Enforcement (`_get_scan_args`)
 
 Every scan profile automatically appends `--host-timeout {timeout}s` based on `config.yaml` (`scanner.timeout`, default: 300s).
 
 ---
 
-## 5. Result Parsing & Normalization (`_parse_results`)
+## 6. Result Parsing & Normalization (`_parse_results`)
 
 Nmap results are parsed into standardized `HostInfo` dataclass objects:
 - **IP & MAC Address**: Extracted from Nmap address dictionaries.
