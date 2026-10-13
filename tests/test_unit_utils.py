@@ -4,6 +4,8 @@ privacy, privileges, constants, console, path_helpers.
 """
 
 from pathlib import Path
+import sys
+import types
 import pytest
 
 from utils.privacy import PrivacyFilter
@@ -103,3 +105,46 @@ class TestPathHelpers:
         assert p is not None
         assert isinstance(p, Path)
         assert resolve_path("") is None
+
+
+class TestNonBlockingInput:
+    def test_nonblocking_input_lifecycle(self):
+        from utils.keyboard import NonBlockingInput
+        kb = NonBlockingInput()
+        assert isinstance(kb.is_windows, bool)
+        with kb as ctx:
+            assert ctx is kb
+            # When no input is queued in non-interactive test run, get_key returns None
+            key = ctx.get_key()
+            assert key is None or isinstance(key, str)
+
+    def test_nonblocking_input_windows_mock(self, monkeypatch):
+        import types
+        from utils.keyboard import NonBlockingInput
+
+        kb = NonBlockingInput()
+        kb.is_windows = True
+
+        fake_msvcrt = types.ModuleType("msvcrt")
+        fake_msvcrt.kbhit = lambda: True
+        fake_msvcrt.getch = lambda: b"q"
+        monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+
+        key = kb.get_key()
+        assert key == "q"
+
+    def test_nonblocking_input_posix_mock(self, monkeypatch):
+        import utils.keyboard as kbmod
+        from utils.keyboard import NonBlockingInput
+
+        kb = NonBlockingInput()
+        kb.is_windows = False
+        kb._is_tty = True
+        kb._active = True
+
+        monkeypatch.setattr(kbmod, "select", types.SimpleNamespace(select=lambda r, w, x, t: ([0], [], [])))
+        monkeypatch.setattr(kbmod.os, "read", lambda fd, n: b"P")
+
+        key = kb.get_key()
+        assert key == "p"
+

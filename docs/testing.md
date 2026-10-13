@@ -16,7 +16,7 @@ uv run --extra dev pytest tests/ -v
 
 ---
 
-## 2. Test Suite Breakdown (286 Total Tests)
+## 2. Test Suite Breakdown (289 Total Tests)
 
 | Test File | Focus & Subsystem Coverage | Test Count |
 |-----------|----------------------------|------------|
@@ -51,9 +51,9 @@ uv run --extra dev pytest tests/ -v
 | [`tests/test_unit_storage_database.py`](../tests/test_unit_storage_database.py) | SQLite database unit tests: sessions, alert batching, host inventory, and Exporter path traversal validation. | 6 |
 | [`tests/test_unit_traffic_lab.py`](../tests/test_unit_traffic_lab.py) | Traffic lab unit tests: atomic accounting, input validation, dispatchers, rate boundary rules, secrets PRNG. | 4 |
 | [`tests/test_unit_tui.py`](../tests/test_unit_tui.py) | TUI component unit tests: LiveDashboard, formatting helpers, badges, and history tables. | 9 |
-| [`tests/test_unit_utils.py`](../tests/test_unit_utils.py) | Utility unit tests: PrivacyFilter, ScreenManager, privilege diagnostics, constants, path helpers. | 12 |
+| [`tests/test_unit_utils.py`](../tests/test_unit_utils.py) | Utility unit tests: PrivacyFilter, ScreenManager, privilege diagnostics, constants, path helpers, NonBlockingInput keyboard listener. | 15 |
 
-**Total Suite Coverage: 286 Passing Tests in ~8.0 Seconds (100% Pass Rate).**
+**Total Suite Coverage: 289 Passing Tests in ~8.0 Seconds (100% Pass Rate).**
 
 ---
 

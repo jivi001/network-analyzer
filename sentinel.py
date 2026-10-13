@@ -52,6 +52,7 @@ from utils.console import (
 )
 from utils.privileges import check_privileges, check_nmap_installed, check_npcap_installed
 from utils.privacy import PrivacyFilter
+from utils.keyboard import NonBlockingInput
 
 from storage.models import PacketInfo, SessionInfo, StatsSnapshot, AlertInfo
 from storage.database import Database
@@ -493,6 +494,7 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
             refresh_fps = config.get("refresh_fps", 10)
             refresh_interval = 1.0 / refresh_fps
             paused = False
+            paused_packets = None
             recent_latencies: deque = deque(maxlen=10)
 
             # Dual Rate Tracker for truthful Capture PPS
@@ -502,69 +504,78 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
 
             # 1. Establish TASK_RUNNING screen ownership before starting Live
             screen_manager.set_state(ScreenState.TASK_RUNNING)
-            with Live(
-                dashboard.get_renderable(),
-                console=console,
-                auto_refresh=False,
-                transient=True,
-            ) as live:
-                while sniffer.is_running():
-                    try:
-                        t_loop_start = time.perf_counter()
+            with NonBlockingInput() as kb_input:
+                with Live(
+                    dashboard.get_renderable(),
+                    console=console,
+                    auto_refresh=False,
+                    transient=True,
+                ) as live:
+                    while sniffer.is_running():
+                        try:
+                            t_loop_start = time.perf_counter()
 
-                        # Calculate Capture PPS
-                        now = time.time()
-                        dt_rate = now - last_rate_calc_time
-                        if dt_rate >= 1.0:
-                            cur_cap = captured_count[0]
-                            instant_cap_pps = (cur_cap - last_cap_count) / dt_rate
-                            captured_pps = (captured_pps * 0.5) + (instant_cap_pps * 0.5)
-                            last_cap_count = cur_cap
-                            last_rate_calc_time = now
+                            # Calculate Capture PPS
+                            now = time.time()
+                            dt_rate = now - last_rate_calc_time
+                            if dt_rate >= 1.0:
+                                cur_cap = captured_count[0]
+                                instant_cap_pps = (cur_cap - last_cap_count) / dt_rate
+                                captured_pps = (captured_pps * 0.5) + (instant_cap_pps * 0.5)
+                                last_cap_count = cur_cap
+                                last_rate_calc_time = now
 
-                        # 1. Microsecond safe snapshot: extract only required visible slice under lock
-                        visible_needed = dashboard.calculate_visible_rows()
-                        t_snap_start = time.perf_counter()
-                        with buffer_lock:
-                            buf_len = len(packet_buffer)
-                            take_n = min(buf_len, visible_needed)
-                            current_packets = [packet_buffer[i] for i in range(buf_len - take_n, buf_len)]
-                        t_snap_elapsed_ms = (time.perf_counter() - t_snap_start) * 1000.0
-                        recent_latencies.append(t_snap_elapsed_ms)
-                        avg_lat = sum(recent_latencies) / len(recent_latencies) if recent_latencies else 0.0
+                            # 1. Microsecond safe snapshot: extract only required visible slice under lock
+                            visible_needed = dashboard.calculate_visible_rows()
+                            t_snap_start = time.perf_counter()
+                            with buffer_lock:
+                                buf_len = len(packet_buffer)
+                                take_n = min(buf_len, visible_needed)
+                                if not paused or paused_packets is None:
+                                    current_packets = [packet_buffer[i] for i in range(buf_len - take_n, buf_len)]
+                                    if paused:
+                                        paused_packets = list(current_packets)
+                                else:
+                                    current_packets = paused_packets
+                            if not paused:
+                                paused_packets = None
+                            t_snap_elapsed_ms = (time.perf_counter() - t_snap_start) * 1000.0
+                            recent_latencies.append(t_snap_elapsed_ms)
+                            avg_lat = sum(recent_latencies) / len(recent_latencies) if recent_latencies else 0.0
 
-                        # 2. Update dashboard layout
-                        dashboard.update(
-                            packets_buffer=current_packets,
-                            captured_count=captured_count[0],
-                            enqueued_count=enqueued_count[0],
-                            processed_count=processed_count[0],
-                            dropped_count=queue_dropped_count[0],
-                            queue_depth=packet_queue.qsize(),
-                            queue_capacity=packet_queue_size,
-                            paused=paused,
-                            degraded_subsystems=degraded_subsystems,
-                            avg_latency_ms=avg_lat,
-                            processing_errors=processing_errors_count[0],
-                            pcap_errors=pcap_errors_count[0],
-                            db_errors=db_errors_count[0],
-                            captured_pps=captured_pps,
-                        )
+                            # 2. Update dashboard layout
+                            dashboard.update(
+                                packets_buffer=current_packets,
+                                captured_count=captured_count[0],
+                                enqueued_count=enqueued_count[0],
+                                processed_count=processed_count[0],
+                                dropped_count=queue_dropped_count[0],
+                                queue_depth=packet_queue.qsize(),
+                                queue_capacity=packet_queue_size,
+                                paused=paused,
+                                degraded_subsystems=degraded_subsystems,
+                                avg_latency_ms=avg_lat,
+                                processing_errors=processing_errors_count[0],
+                                pcap_errors=pcap_errors_count[0],
+                                db_errors=db_errors_count[0],
+                                captured_pps=captured_pps,
+                            )
 
-                        # 3. Render latest frame directly
-                        live.update(dashboard.get_renderable(), refresh=True)
+                            # 3. Render latest frame directly
+                            live.update(dashboard.get_renderable(), refresh=True)
 
-                        # 4. Keyboard handling for Windows
-                        if sys.platform == 'win32':
-                            import msvcrt
-                            while msvcrt.kbhit():
-                                key = msvcrt.getch().decode('utf-8', 'ignore').lower()
+                            # 4. Cross-platform keyboard handling (Windows, Linux, macOS)
+                            while True:
+                                key = kb_input.get_key()
+                                if not key:
+                                    break
                                 if key == 'q':
                                     sniffer.stop()
                                 elif key == 'p':
                                     paused = not paused
                                 elif key == 'f':
                                     live.stop()
+                                    kb_input.stop()
                                     screen_manager.set_state(ScreenState.TASK_CONFIG)
                                     try:
                                         new_filter = Prompt.ask("BPF Filter (blank to clear)", default="", console=console).strip()
@@ -580,9 +591,11 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
                                         time.sleep(1.0)
                                     finally:
                                         screen_manager.set_state(ScreenState.TASK_RUNNING)
+                                        kb_input.start()
                                         live.start(refresh=True)
                                 elif key == 'e':
                                     live.stop()
+                                    kb_input.stop()
                                     screen_manager.set_state(ScreenState.TASK_CONFIG)
                                     export_dir = config.get("export_directory", "exports")
                                     exporter = Exporter(default_export_dir=export_dir, allow_absolute=False)
@@ -602,16 +615,17 @@ def run_live_capture(config: dict, db: Database, privacy: PrivacyFilter):
                                         time.sleep(1.0)
                                     finally:
                                         screen_manager.set_state(ScreenState.TASK_RUNNING)
+                                        kb_input.start()
                                         live.start(refresh=True)
 
-                        # 5. Latest-State-Wins pacing: sleep only remaining time delta
-                        loop_elapsed = time.perf_counter() - t_loop_start
-                        sleep_time = max(0.0, refresh_interval - loop_elapsed)
-                        if sleep_time > 0:
-                            time.sleep(sleep_time)
+                            # 5. Latest-State-Wins pacing: sleep only remaining time delta
+                            loop_elapsed = time.perf_counter() - t_loop_start
+                            sleep_time = max(0.0, refresh_interval - loop_elapsed)
+                            if sleep_time > 0:
+                                time.sleep(sleep_time)
 
-                    except KeyboardInterrupt:
-                        break
+                        except KeyboardInterrupt:
+                            break
 
         except KeyboardInterrupt:
             pass

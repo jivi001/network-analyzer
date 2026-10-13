@@ -174,7 +174,7 @@ Explore the operational knowledge base:
 | [Network Intelligence](docs/network-intelligence.md) | Reverse DNS resolver, WHOIS lookup engine with TTL caching, ICMP traceroute. |
 | [Troubleshooting Guide](docs/troubleshooting.md) | Solutions for sniffer permissions, Nmap PATH, SQLite locks, and TUI display. |
 | [Developer Debugging](docs/debugging.md) | Debug logging, Scapy dissector debugging, thread inspection, and SQLite queries. |
-| [Automated Testing](docs/testing.md) | Pytest suite breakdown (286 unit, security boundary, stress, and end-to-end tests). |
+| [Automated Testing](docs/testing.md) | Pytest suite breakdown (289 unit, security boundary, stress, and end-to-end tests). |
 | [Performance Architecture](docs/performance.md) | Memory bounds, 10,000 queue limits, EMA rate smoothing, and SQLite WAL pragmas. |
 | [Security Controls](docs/security.md) | Command injection prevention, BPF checks, path containment, PRNG hardening, SQL parameters. |
 | [Developer Guide](docs/development.md) | Repository directory structure, coding standards, and architectural guidelines. |
@@ -189,12 +189,12 @@ Explore the operational knowledge base:
 
 ## 🧪 Testing Verification
 
-Run the 286-test automated regression, security boundary, stress, and end-to-end workflow suite:
+Run the 289-test automated regression, security boundary, stress, and end-to-end workflow suite:
 
 ```bash
 uv run --extra dev pytest tests/ -v
 ```
 
 ```text
-============================= 286 passed in 8.01s =============================
+============================= 289 passed in 8.01s =============================
 ```
