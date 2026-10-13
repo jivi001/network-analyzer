@@ -18,21 +18,44 @@ fi
 # 2. Virtual Environment
 if [ ! -f ".venv/bin/python" ]; then
     echo "[*] Creating Python virtual environment in .venv..."
-    python3 -m venv .venv
+    if command -v uv &>/dev/null; then
+        uv venv .venv
+    else
+        python3 -m venv .venv
+    fi
 fi
 
-# 3. Upgrade pip and build tools
-echo "[*] Upgrading pip and build tools..."
-.venv/bin/python -m pip install --upgrade pip setuptools wheel --quiet
+# Ensure run.sh is executable
+chmod +x run.sh 2>/dev/null || true
 
-# 4. Install in editable mode
+# 3. Ensure pip or uv is available
 DEV_FLAG=""
 if [ "$1" == "--dev" ]; then
     DEV_FLAG="[dev]"
 fi
 
-echo "[*] Installing my-sentinel package in editable mode (.${DEV_FLAG})..."
-.venv/bin/python -m pip install -e ".${DEV_FLAG}"
+if command -v uv &>/dev/null; then
+    echo "[*] Installing my-sentinel package via uv..."
+    uv pip install -e ".${DEV_FLAG}"
+else
+    if ! .venv/bin/python -m pip --version &>/dev/null; then
+        echo "[*] Bootstrapping pip into virtual environment..."
+        .venv/bin/python -m ensurepip --default-pip --upgrade 2>/dev/null || true
+    fi
+
+    echo "[*] Upgrading pip and build tools..."
+    .venv/bin/python -m pip install --upgrade pip setuptools wheel --quiet 2>/dev/null || true
+
+    echo "[*] Installing my-sentinel package in editable mode (.${DEV_FLAG})..."
+    .venv/bin/python -m pip install -e ".${DEV_FLAG}"
+fi
+
+# 4. User CLI Launcher in ~/.local/bin
+if [ -f ".venv/bin/sentinel" ]; then
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$SCRIPT_DIR/.venv/bin/sentinel" "$HOME/.local/bin/sentinel"
+    echo "[*] Created user launcher: ~/.local/bin/sentinel"
+fi
 
 # 5. System diagnostics
 echo ""
@@ -52,7 +75,10 @@ fi
 echo ""
 echo "================================================"
 echo "          INSTALLATION COMPLETE!                "
-echo " Launch locally with:"
+echo " Launch directly from terminal:"
+echo "   $ sentinel"
+echo ""
+echo " Or launch locally with:"
 echo "   $ ./run.sh             # Interactive TUI"
 echo "   $ ./run.sh --capture   # Direct live capture"
 echo " Or activate venv:"
