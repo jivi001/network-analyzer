@@ -12,7 +12,7 @@ from rich.text import Text
 from storage.models import PacketInfo, StatsSnapshot, AlertInfo
 from utils.constants import format_bytes
 from utils.console import console, ScreenState, screen_manager
-from tui.helpers import protocol_badge, severity_badge, build_bar, format_elapsed
+from tui.helpers import protocol_badge, severity_badge, build_bar, format_elapsed, sanitize_display
 
 
 def display_pcap_loading(filepath: str, console_inst: Optional[Console] = None):
@@ -148,8 +148,8 @@ def render_pcap_forensic_dashboard(
     displayed_convs = conv_items[:max_conv_rows]
     for conv in displayed_convs:
         conv_table.add_row(
-            conv.get("src", "-"),
-            conv.get("dst", "-"),
+            sanitize_display(conv.get("src", "-")),
+            sanitize_display(conv.get("dst", "-")),
             f"{conv.get('packets', 0):,}",
         )
     if not conv_items:
@@ -185,7 +185,7 @@ def render_pcap_forensic_dashboard(
     displayed_talkers = talker_items[:max_talker_rows]
     for item in displayed_talkers:
         talkers_table.add_row(
-            item.get("ip", "-"),
+            sanitize_display(item.get("ip", "-")),
             format_bytes(item.get("bytes", 0)),
             f"{item.get('packets', 0):,}",
         )
@@ -227,11 +227,11 @@ def render_pcap_forensic_dashboard(
                 if a.timestamp_str and len(a.timestamp_str) >= 8
                 else (a.timestamp_str or "-")
             )
-            safe_msg = (a.message or "-").replace("→", "->")
+            safe_msg = sanitize_display(a.message or "-").replace("→", "->")
             threat_table.add_row(
-                t_str,
+                sanitize_display(t_str),
                 severity_badge(a.severity),
-                a.rule_name or "Threat Detected",
+                sanitize_display(a.rule_name or "Threat Detected"),
                 safe_msg,
             )
         if len(alerts) > max_threat_rows:

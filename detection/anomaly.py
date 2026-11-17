@@ -110,20 +110,22 @@ class AnomalyDetector:
         if not labels:
             return None
 
-        # Inspect all subdomain labels (exclude TLD/registered domain)
-        candidate_labels = labels[:-1] if len(labels) >= 2 else labels
-
+        # Analyze all labels for position-aware entropy detection.
+        # We inspect each label independently of position to avoid blind spots.
+        # Legitimate suffixes are handled by requiring minimum length AND entropy.
         suspicious_candidates = []
-        for lbl in candidate_labels:
-            if len(lbl) > 20:
+        for idx, lbl in enumerate(labels):
+            # Use configured minimum length threshold (default 20)
+            if len(lbl) >= 20:
                 ent = shannon_entropy(lbl.lower())
                 if ent > 3.5:
-                    suspicious_candidates.append((lbl, ent))
+                    suspicious_candidates.append((lbl, ent, idx))
 
         if not suspicious_candidates:
             return None
 
-        best_label, max_ent = max(suspicious_candidates, key=lambda x: x[1])
+        # Get the high-entropy label with highest entropy
+        best_label, max_ent, best_idx = max(suspicious_candidates, key=lambda x: x[1])
         packet.entropy = round(max_ent, 2)
 
         ts = packet.timestamp if isinstance(packet.timestamp, (int, float)) and packet.timestamp > 0 else time.time()
@@ -156,13 +158,13 @@ class AnomalyDetector:
             # Severity escalation based on multi-signal correlation
             if unique_count >= 3 or total_count >= 5:
                 severity = "CRITICAL"
-                message = f"DNS Exfiltration Tunnel: {query} (entropy={max_ent:.2f}, unique_labels={unique_count}, queries={total_count})"
+                message = f"DNS Exfiltration Tunnel: {query} (label='{best_label}', position={best_idx + 1}, length={len(best_label)}, entropy={max_ent:.2f}, unique_labels={unique_count}, queries={total_count})"
             elif unique_count >= 2:
                 severity = "HIGH"
-                message = f"DNS Exfiltration (repeated): {query} (entropy={max_ent:.2f}, unique_labels={unique_count})"
+                message = f"DNS Exfiltration (repeated): {query} (label='{best_label}', position={best_idx + 1}, entropy={max_ent:.2f}, unique_labels={unique_count})"
             else:
                 severity = "WARNING"
-                message = f"Suspicious DNS query: {query} (entropy={max_ent:.2f}, single signal)"
+                message = f"Suspicious DNS query: {query} (label='{best_label}', position={best_idx + 1}, length={len(best_label)}, entropy={max_ent:.2f}, single signal)"
 
             return AlertInfo(
                 rule_name="DNS Exfiltration Tunnel",
