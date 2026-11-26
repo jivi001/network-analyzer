@@ -47,7 +47,7 @@ detection:
   beacon_interval_tolerance: 5.0 # Beaconing tolerance in seconds
 
 network:
-  enable_whois: true             # Enable IP Whois lookups
+  enable_whois: true             # Enable IP Whois lookups (no-op when ipwhois is not installed)
   whois_cache_ttl: 3600          # Whois cache time-to-live (seconds)
   enable_rdns: true              # Enable reverse DNS resolution
   enable_traceroute: false       # Enable active ICMP traceroute

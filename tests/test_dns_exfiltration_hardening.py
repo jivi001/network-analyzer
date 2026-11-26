@@ -124,12 +124,13 @@ class DnsExfiltrationHardeningTests(unittest.TestCase):
         pkt_21 = PacketInfo(id=3, timestamp=time.time(), protocol="DNS", dns_query=query_21)
 
         self.assertIsNone(self.anomaly_detector.check_dns_exfiltration(pkt_19))
-        # 20 chars: should be evaluated now (>= instead of >), but may or may not trigger based on entropy
-        # We'll just verify it doesn't crash
-        try:
-            result_20 = self.anomaly_detector.check_dns_exfiltration(pkt_20)
-        except Exception as e:
-            self.fail(f"20-char query caused crash: {e}")
+        # 20 chars: at the inclusive boundary (>=) and high entropy (4.32 > 3.5),
+        # so it MUST be evaluated and MUST trigger. This is the exact-length PoC:
+        # it fails against the old strict `>` check and passes against the fix.
+        self.assertIsNotNone(
+            self.anomaly_detector.check_dns_exfiltration(pkt_20),
+            "20-char high-entropy label at the minimum length must be detected (>= fix)",
+        )
         # 21 chars: should trigger if entropy > 3.5
         self.assertIsNotNone(self.anomaly_detector.check_dns_exfiltration(pkt_21))
 

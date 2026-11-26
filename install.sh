@@ -9,6 +9,13 @@ echo "================================================"
 echo "       🛡️  Installing my-sentinel CLI 🛡️       "
 echo "================================================"
 
+# 0. Terminate any running sentinel instances that may lock .venv files
+if pgrep -f "sentinel.py" &>/dev/null; then
+    echo "[!] Found running sentinel process(es). Terminating to prevent file locking..."
+    pkill -f "sentinel.py" 2>/dev/null || true
+    sleep 0.5
+fi
+
 # 1. Check Python
 if ! command -v python3 &>/dev/null; then
     echo "[-] python3 is not installed. Please install Python 3.9+."
@@ -27,6 +34,14 @@ fi
 
 # Ensure run.sh is executable
 chmod +x run.sh 2>/dev/null || true
+
+# Pre-clean existing entrypoint binaries before reinstall
+rm -f .venv/bin/sentinel .venv/bin/sentinal 2>/dev/null || true
+
+# Clean up any stale pip temporary directories
+if [ -d ".venv" ]; then
+    find .venv -type d -name "~*" -exec rm -rf {} + 2>/dev/null || true
+fi
 
 # 3. Ensure pip or uv is available
 DEV_FLAG=""

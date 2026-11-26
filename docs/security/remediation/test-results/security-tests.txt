@@ -1,0 +1,31 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /home/exu0/cybersecurity/Programs/network-analyzer/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/exu0/cybersecurity/Programs/network-analyzer
+configfile: pyproject.toml
+plugins: cov-7.1.0
+collecting ... collected 21 items
+
+tests/test_sanitize_display.py::SanitizeDisplayTests::test_does_not_mutate_input PASSED [  4%]
+tests/test_sanitize_display.py::SanitizeDisplayTests::test_escapes_rich_markup PASSED [  9%]
+tests/test_sanitize_display.py::SanitizeDisplayTests::test_handles_long_input PASSED [ 14%]
+tests/test_sanitize_display.py::SanitizeDisplayTests::test_handles_none_and_unexpected_types PASSED [ 19%]
+tests/test_sanitize_display.py::SanitizeDisplayTests::test_neutralises_osc52_clipboard PASSED [ 23%]
+tests/test_sanitize_display.py::SanitizeDisplayTests::test_neutralises_osc8_hyperlink PASSED [ 28%]
+tests/test_sanitize_display.py::SanitizeDisplayTests::test_preserves_unicode_and_readable_text PASSED [ 33%]
+tests/test_sanitize_display.py::SanitizeDisplayTests::test_removes_c0_control_chars_but_keeps_tab_lf_cr PASSED [ 38%]
+tests/test_sanitize_display.py::SanitizeDisplayTests::test_removes_esc_and_ansi_csi PASSED [ 42%]
+tests/test_sanitize_display.py::SanitizeDisplayTests::test_renders_safely_through_rich PASSED [ 47%]
+tests/test_dns_exfiltration_hardening.py::DnsExfiltrationHardeningTests::test_entropy_edge_cases PASSED [ 52%]
+tests/test_dns_exfiltration_hardening.py::DnsExfiltrationHardeningTests::test_length_boundary_conditions PASSED [ 57%]
+tests/test_dns_exfiltration_hardening.py::DnsExfiltrationHardeningTests::test_malformed_dns_inputs_do_not_crash PASSED [ 61%]
+tests/test_dns_exfiltration_hardening.py::DnsExfiltrationHardeningTests::test_ordinary_dns_queries_do_not_alert PASSED [ 66%]
+tests/test_dns_exfiltration_hardening.py::DnsExfiltrationHardeningTests::test_position_aware_dns_detection PASSED [ 71%]
+tests/test_dns_exfiltration_hardening.py::DnsExfiltrationHardeningTests::test_suspicious_high_entropy_detection PASSED [ 76%]
+tests/test_dns_exfiltration_hardening.py::DnsExfiltrationHardeningTests::test_sustained_tunnel_query_multi_signal_correlation PASSED [ 80%]
+tests/test_tui_stability_regressions.py::TUIStabilityRegressionTests::test_dynamic_packet_table_sizing PASSED [ 85%]
+tests/test_tui_stability_regressions.py::TUIStabilityRegressionTests::test_near_100_percent_queue_saturation_health PASSED [ 90%]
+tests/test_tui_stability_regressions.py::TUIStabilityRegressionTests::test_safe_snapshot_isolation_under_high_concurrency PASSED [ 95%]
+tests/test_tui_stability_regressions.py::TUIStabilityRegressionTests::test_untrusted_markup_safety PASSED [100%]
+
+============================== 21 passed in 0.88s ==============================
