@@ -9,7 +9,7 @@ from rich.text import Text
 
 from storage.models import SessionInfo, AlertInfo, HostInfo
 from utils.constants import format_bytes
-from tui.helpers import format_alert_row, format_host_row
+from tui.helpers import format_alert_row, format_host_row, sanitize_display
 from utils.console import console, screen_manager, ScreenState
 
 
@@ -69,14 +69,14 @@ def display_sessions(sessions: List[SessionInfo]):
 
     for s in sessions:
         table.add_row(
-            str(s.id),
-            s.session_type or "",
-            str(s.start_time or ""),
-            str(s.end_time or ""),
+            sanitize_display(str(s.id)),
+            sanitize_display(s.session_type or ""),
+            sanitize_display(str(s.start_time) if s.start_time else ""),
+            sanitize_display(str(s.end_time) if s.end_time else ""),
             f"{s.packet_count:,}",
             format_bytes(s.total_bytes),
-            str(s.alert_count),
-            s.status or "",
+            sanitize_display(str(s.alert_count)),
+            sanitize_display(s.status or ""),
         )
 
     console.print(table)
@@ -132,15 +132,15 @@ def display_session_detail(session: SessionInfo, alerts: List[AlertInfo]):
 
     # Summary panel
     summary = (
-        f"Session ID: [bold]{session.id}[/bold]\n"
-        f"Type: [cyan]{session.session_type}[/cyan]\n"
-        f"Interface / Target: [white]{session.interface or session.target or 'N/A'}[/white]\n"
-        f"Status: [green]{session.status}[/green]\n"
+        f"Session ID: [bold]{sanitize_display(str(session.id))}[/bold]\n"
+        f"Type: [cyan]{sanitize_display(session.session_type)}[/cyan]\n"
+        f"Interface / Target: [white]{sanitize_display(session.interface or session.target or 'N/A')}[/white]\n"
+        f"Status: [green]{sanitize_display(session.status)}[/green]\n"
         f"Total Packets: [bold]{session.packet_count:,}[/bold]\n"
         f"Total Volume: [bold]{format_bytes(session.total_bytes)}[/bold]\n"
         f"Alerts Flagged: [bold red]{session.alert_count}[/bold red]"
     )
-    console.print(Panel(summary, title=f"Session #{session.id} Overview", border_style="blue"))
+    console.print(Panel(summary, title=f"Session #{sanitize_display(str(session.id))} Overview", border_style="blue"))
     console.print()
 
     if alerts:

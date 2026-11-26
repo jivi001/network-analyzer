@@ -4,7 +4,7 @@
 
 ## 1. Test Suite Commands
 
-- **Test Automation**: Pytest suite (`pytest-cov`) with **286 automated tests** across 32 test modules.
+- **Test Automation**: Pytest suite (`pytest-cov`) with **300 automated tests** across 32 test modules.
 - **Coverage**: **85%+ overall statement coverage** with 90%+ across models, telemetry, database, security predicates, exporters, and importers.
 - **Execution Speed**: Full suite executes in **~8.0 seconds**.
 
@@ -16,7 +16,7 @@ uv run --extra dev pytest tests/ -v
 
 ---
 
-## 2. Test Suite Breakdown (289 Total Tests)
+## 2. Test Suite Breakdown (300 Total Tests)
 
 | Test File | Focus & Subsystem Coverage | Test Count |
 |-----------|----------------------------|------------|
@@ -53,7 +53,7 @@ uv run --extra dev pytest tests/ -v
 | [`tests/test_unit_tui.py`](../tests/test_unit_tui.py) | TUI component unit tests: LiveDashboard, formatting helpers, badges, and history tables. | 9 |
 | [`tests/test_unit_utils.py`](../tests/test_unit_utils.py) | Utility unit tests: PrivacyFilter, ScreenManager, privilege diagnostics, constants, path helpers, NonBlockingInput keyboard listener. | 15 |
 
-**Total Suite Coverage: 289 Passing Tests in ~8.0 Seconds (100% Pass Rate).**
+**Total Suite Coverage: 300 Passing Tests in ~8.0 Seconds (100% Pass Rate).**
 
 ---
 

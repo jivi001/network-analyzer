@@ -136,7 +136,6 @@ sudo .venv/bin/sentinel
 scapy>=2.5.0
 rich>=13.0.0
 python-nmap>=0.7.1
-ipwhois>=1.2.0
 pyyaml>=6.0
 ```
 
@@ -151,7 +150,7 @@ python3 --version  # or python --version
 # Verify sentinel CLI availability
 sentinel --version
 
-# Verify automated test suite execution (286 tests, 100% pass)
+# Verify automated test suite execution (300 tests, 100% pass)
 uv run --extra dev pytest tests/ -v
 # Or via standard pytest
 pytest tests/ -v

@@ -1,7 +1,7 @@
 # Frequently Asked Questions (FAQ)
 
 ## 1. How is `my-sentinel` installed on Windows?
-Run `install.ps1` in PowerShell as Administrator. This creates `.venv/`, installs all dependencies (`scapy`, `rich`, `python-nmap`, `ipwhois`, `pyyaml`), installs `my-sentinel` as an editable package, and adds `sentinel` to your executable PATH.
+Run `install.ps1` in PowerShell as Administrator. This creates `.venv/`, installs all dependencies (`scapy`, `rich`, `python-nmap`, `pyyaml`), installs `my-sentinel` as an editable package, and adds `sentinel` to your executable PATH.
 
 ---
 

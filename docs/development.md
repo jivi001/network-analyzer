@@ -29,7 +29,7 @@ network-analyzer/
 │
 ├── network/                 → Network Intelligence & Lookups
 │   ├── resolver.py          → Thread-safe reverse DNS resolver with cache
-│   ├── whois_lookup.py      → WHOIS ASN/Org lookup engine
+│   ├── whois_lookup.py      → WHOIS ASN/Org lookup engine (graceful fallback without ipwhois)
 │   └── traceroute.py        → Active ICMP/UDP route traceroute
 │
 ├── storage/                 → Database & Import/Export Layer

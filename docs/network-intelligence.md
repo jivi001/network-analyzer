@@ -4,7 +4,7 @@
 
 The `network/` package provides external lookup capabilities for IP addresses and network nodes:
 - **`network/resolver.py`**: Thread-safe reverse DNS resolution with memory caching.
-- **`network/whois_lookup.py`**: Autonomous System Number (ASN) and IP ownership lookups via `ipwhois`.
+- **`network/whois_lookup.py`**: Autonomous System Number (ASN) and IP ownership lookups with graceful fallback when `ipwhois` is unavailable.
 - **`network/traceroute.py`**: Active ICMP/UDP route discovery.
 
 ---
@@ -20,9 +20,10 @@ The `network/` package provides external lookup capabilities for IP addresses an
 
 ## 3. Whois Lookup (`network/whois_lookup.py`)
 
-`WhoisLookup` queries WHOIS registrars using the `ipwhois` library:
-- Extracts ASN, Org Name, Network CIDR, Country code, and Registrar.
+`WhoisLookup` queries WHOIS registrars with graceful fallback when `ipwhois` is unavailable:
+- Extracts ASN, Org Name, Network CIDR, Country code, and Registrar when `ipwhois` is installed.
 - Enforces TTL-based caching (`whois_cache_ttl`, default: 3600s).
+- When `ipwhois` is not installed, returns minimal `WhoisInfo` with only the IP address; no external query is performed.
 - Gracefully handles private/bogon IP addresses (`10.0.0.0/8`, `192.168.0.0/16`, `127.0.0.0/8`) without attempting external queries.
 
 ---

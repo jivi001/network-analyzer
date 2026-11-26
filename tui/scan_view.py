@@ -9,6 +9,7 @@ from rich.text import Text
 
 from storage.models import ScanResult, HostInfo
 from utils.console import console, ScreenState, screen_manager
+from tui.helpers import sanitize_display
 
 
 def display_scan_progress(target: str, scan_type: str, scan_args: str = ""):
@@ -20,9 +21,9 @@ def display_scan_progress(target: str, scan_type: str, scan_args: str = ""):
     args_str = scan_args or profile_info.get("args", "")
 
     progress_body = (
-        f"Target: [bold cyan]{target}[/bold cyan]\n"
-        f"Profile: [bold yellow]{profile_name}[/bold yellow] ({scan_type})\n"
-        f"Arguments: [dim]{args_str}[/dim]\n"
+        f"Target: [bold cyan]{sanitize_display(target)}[/bold cyan]\n"
+        f"Profile: [bold yellow]{sanitize_display(profile_name)}[/bold yellow] ({scan_type})\n"
+        f"Arguments: [dim]{sanitize_display(args_str)}[/dim]\n"
         f"Status: [bold green]Running...[/bold green]"
     )
     if profile_info.get("warning"):
@@ -48,9 +49,9 @@ def display_scan_results(result: ScanResult):
 
     # Summary panel
     summary_text = (
-        f"Target: [bold cyan]{result.target}[/bold cyan]\n"
-        f"Profile: [bold cyan]{profile_name}[/bold cyan] ({result.scan_type})\n"
-        f"Scan Arguments: [dim]{result.scan_args}[/dim]\n"
+        f"Target: [bold cyan]{sanitize_display(result.target)}[/bold cyan]\n"
+        f"Profile: [bold cyan]{sanitize_display(profile_name)}[/bold cyan] ({result.scan_type})\n"
+        f"Scan Arguments: [dim]{sanitize_display(result.scan_args)}[/dim]\n"
         f"Hosts Found: [bold green]{result.hosts_found}[/bold green]\n"
         f"Duration: [bold yellow]{result.duration_sec:.2f}s[/bold yellow]"
     )
@@ -84,12 +85,12 @@ def display_scan_results(result: ScanResult):
             open_ports_summary = open_ports_summary[:37] + "..."
 
         host_table.add_row(
-            host.ip_address,
-            host.hostname or "N/A",
-            host.state or "up",
+            sanitize_display(host.ip_address),
+            sanitize_display(host.hostname or "N/A"),
+            sanitize_display(host.state or "up"),
             str(len(host.open_ports)),
             open_ports_summary,
-            host.os_guess or "Unknown",
+            sanitize_display(host.os_guess or "Unknown"),
         )
 
     console.print(host_table)
@@ -109,7 +110,7 @@ def display_host_detail(host: HostInfo):
 
     if host.services:
         for port_str, svc_info in host.services.items():
-            port_table.add_row(port_str, svc_info or "Unknown")
+            port_table.add_row(sanitize_display(port_str), sanitize_display(svc_info or "Unknown"))
     else:
         for p in host.open_ports:
             port_table.add_row(str(p), "Open")
@@ -117,7 +118,7 @@ def display_host_detail(host: HostInfo):
     console.print(
         Panel(
             port_table,
-            title=f"Port Details for {host.ip_address} ({host.hostname or 'No Hostname'})",
+            title=f"Port Details for {sanitize_display(host.ip_address)} ({sanitize_display(host.hostname or 'No Hostname')})",
             border_style="cyan",
         )
     )

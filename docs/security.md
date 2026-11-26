@@ -18,6 +18,7 @@ Evidence-based documentation of implemented security controls and data safety gu
 | **Sniffer Shutdown Deadlocks** | Scapy sniffer loop uses bounded 500ms timeouts (`timeout=0.5, count=50`) allowing non-blocking stop flag evaluation and deterministic thread joins even on idle interfaces. | [`core/sniffer.py`](../core/sniffer.py) | **CWE-835** |
 | **Unsafe YAML Loading** | Detection rules loaded using `yaml.safe_load()` to prevent arbitrary code execution during rule parsing. | [`detection/rule_engine.py`](../detection/rule_engine.py) | **CWE-502** |
 | **Privacy Data Leakage** | `PrivacyFilter` provides deterministic IP masking (e.g. `192.168.1.50` -> `X.X.X.50` or `192.168.1.X`) across TUI views and exported data. | [`utils/privacy.py`](../utils/privacy.py) | **CWE-200 / CWE-359** |
+| **Rich Markup & Terminal Escape Injection** | Untrusted network data is sanitized via `sanitize_display()` before Rich terminal rendering. Prevents markup tag injection (`[bold]`, `[red]`) and control-character escape sequences (OSC 52, ESC, C0 controls). | [`tui/helpers.py`](../tui/helpers.py) | **CWE-79** / **CWE-80** |
 | **Import Payload Exploits** | `storage/importer.py` validates schema types, non-negative packet counts, and executes imports inside atomic transactions. | [`storage/importer.py`](../storage/importer.py) | **CWE-20** |
 
 ---

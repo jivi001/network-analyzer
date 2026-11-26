@@ -1,12 +1,48 @@
 import datetime
+import re
 from typing import Optional, List
 
 from storage.models import PacketInfo, AlertInfo, HostInfo
 from utils.constants import get_protocol_color, get_severity_props
 from utils.privacy import PrivacyFilter
 
-
 from rich.markup import escape
+
+
+# Control character filtering regex
+# Removes C0 control chars (0x00-0x1F) except tab (0x09), newline (0x0A), carriage return (0x0D)
+# Removes DEL (0x7F) and ESC (0x1B)
+CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F\x1B]")
+
+
+def sanitize_display(value: object) -> str:
+    """
+    Safely convert input to a string safe for terminal rendering.
+
+    Applies:
+    1. Safe string conversion (handles None, objects, exceptions)
+    2. Rich markup escaping to prevent markup injection
+    3. Control character filtering to prevent terminal escape-sequence injection
+       (removes C0 controls except TAB/LF/CR, DEL, and ESC sequences incl. OSC 52)
+
+    Does NOT modify the underlying forensic data - only the display representation.
+    """
+    # 1. Safe string conversion
+    try:
+        if value is None:
+            return ""
+        s = str(value)
+    except Exception:
+        # If str() fails, return safe placeholder
+        return "<unprintable>"
+
+    # 2. Escape Rich markup
+    s = escape(s)
+
+    # 3. Remove control characters: C0 controls (except TAB/LF/CR), DEL, ESC and OSC sequences
+    s = CONTROL_CHAR_RE.sub("", s)
+
+    return s
 
 
 def format_packet_row(

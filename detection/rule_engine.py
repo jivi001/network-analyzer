@@ -160,7 +160,6 @@ class RuleEngine:
             labels = [lbl for lbl in query.split(".") if lbl]
             if not labels:
                 return False
-            candidate_labels = labels[:-1] if len(labels) >= 2 else labels
             try:
                 min_length = int(match.get("min_subdomain_length", 20))
                 threshold = float(match.get("entropy_threshold", 3.5))
@@ -170,8 +169,9 @@ class RuleEngine:
 
             max_ent = 0.0
             matched = False
-            for lbl in candidate_labels:
-                if len(lbl) > min_length:
+            for idx, lbl in enumerate(labels):
+                # Inclusive boundary: labels >= min_length are evaluated
+                if len(lbl) >= min_length:
                     ent = shannon_entropy(lbl.lower())
                     if ent > threshold:
                         matched = True
